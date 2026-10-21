@@ -1,0 +1,54 @@
+{
+  "name": "@lucianonerydev/fatturapa",
+  "version": "0.1.0",
+  "description": "Build and validate Italian electronic invoices (FatturaPA FPR12) from integer cents, with SDI-consistent totals. Zero dependencies.",
+  "license": "MIT",
+  "author": "Luciano Nery <luciano@lucianonery.dev> (https://lucianonery.dev)",
+  "homepage": "https://github.com/LucianoNeryDev/fatturapa#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LucianoNeryDev/fatturapa.git"
+  },
+  "bugs": "https://github.com/LucianoNeryDev/fatturapa/issues",
+  "keywords": [
+    "fatturapa",
+    "fattura elettronica",
+    "e-invoice",
+    "sdi",
+    "italy",
+    "xml",
+    "invoice"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "test:schema": "sh scripts/fetch-xsd.sh && FATTURAPA_XSD=.xsd/fatturapa.xsd tsx --test test/*.test.ts",
+    "format": "prettier --write src test docs *.md package.json tsconfig.json",
+    "format:check": "prettier --check src test docs *.md package.json tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "prettier": "^3.6.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
