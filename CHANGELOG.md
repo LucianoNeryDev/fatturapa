@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 - 2026-10-21
+
+- Published on npm as `@lucianonerydev/fatturapa`. No code changes.
+
 ## 0.1.0 - 2026-10-21
 
 First release.

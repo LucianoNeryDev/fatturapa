@@ -2,7 +2,6 @@
 
 Planned, roughly in order:
 
-- **npm release**, so the package installs without git.
 - **Withholding tax and pension funds** (ritenuta d'acconto, cassa previdenziale), for professionals' invoices.
 - **Instalments**: more than one payment with its own due date and amount.
 - **Public-administration invoices** (FPA12), with CIG, CUP and the PA recipient codes.
