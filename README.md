@@ -77,10 +77,8 @@ Not supported yet: document-level discounts, public-administration invoices (FPA
 
 ## Install
 
-Not on npm yet. Install it from git; the package builds itself on install:
-
 ```sh
-npm install github:LucianoNeryDev/fatturapa
+npm install @lucianonerydev/fatturapa
 ```
 
 It needs Node.js 20 or later and ships ES modules with type declarations.
