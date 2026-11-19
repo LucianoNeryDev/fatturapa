@@ -97,6 +97,8 @@ npm run test:schema  # also validates generated files against the official XSD (
 npm run build
 ```
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the project rules and the checks to run before a pull request.
+
 ## License
 
 [MIT](LICENSE) © Luciano Nery
