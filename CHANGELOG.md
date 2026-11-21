@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Foreign sellers: `seller.permanentEstablishment` renders `StabileOrganizzazione` and `seller.fiscalRepresentative` renders `RappresentanteFiscale`, for sellers whose `address` is abroad. A non-resident seller keeps its Italian Partita IVA in `vatNumber`. New exported type `FiscalRepresentative`.
+- Foreign buyers: `buyer.permanentEstablishment` (`StabileOrganizzazione`) and `buyer.fiscalRepresentative` (`RappresentanteFiscale`), only for buyers abroad. A permanent establishment and a fiscal representative cannot be combined.
 - Document-level discounts and surcharges (`adjustments` on the invoice), applied in cascade and spread over the VAT rates as `SC`/`AC` lines. `computeTotals` and the result gain `adjustmentLines`.
 - Public administration invoices: `format: "FPA12"` sets `versione` and `FormatoTrasmissione`. It requires the 6-character codice univoco ufficio as recipient code and rejects PEC and foreign buyers. FPR12 invoices reject 6-character codes.
 - `isValidRecipientCode(code, format?)` takes an optional format; `"FPA12"` checks a 6-character office code.

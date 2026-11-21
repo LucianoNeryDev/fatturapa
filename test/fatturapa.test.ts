@@ -105,6 +105,48 @@ const foreign: InvoiceInput = {
   ],
 };
 
+const germanSeller = {
+  ...base.seller,
+  name: "Fleischerei Schmidt GmbH",
+  address: {
+    street: "Hauptstraße 1",
+    postalCode: "10115",
+    city: "Berlin",
+    country: "DE",
+  },
+};
+const italianEstablishment = {
+  street: "Via Torino 3",
+  postalCode: "20123",
+  city: "Milano",
+  province: "MI",
+};
+const withRepresentative: InvoiceInput = {
+  ...base,
+  seller: {
+    ...germanSeller,
+    fiscalRepresentative: {
+      vatNumber: "10000000009",
+      fiscalCode: "RSSMRA80A01H501U",
+      name: "Rappresentanza Fiscale Srl",
+    },
+  },
+};
+const withEstablishment: InvoiceInput = {
+  ...base,
+  seller: {
+    ...germanSeller,
+    name: "Boucherie Martin SARL",
+    address: {
+      street: "Rue de la Paix 1",
+      postalCode: "75002",
+      city: "Paris",
+      country: "FR",
+    },
+    permanentEstablishment: italianEstablishment,
+  },
+};
+
 const publicAdministration: InvoiceInput = {
   ...base,
   format: "FPA12",
@@ -1035,6 +1077,231 @@ test("allocation splits cents proportionally and always adds up", () => {
     );
 });
 
+/** The XML without the indentation between tags, to match whole elements. */
+function compact(xml: string): string {
+  return xml.replace(/>\s+</g, "><");
+}
+
+function indexOfTag(xml: string, tag: string, from = 0): number {
+  const index = xml.indexOf(`<${tag}>`, from);
+  assert.notEqual(index, -1, `${tag} is missing`);
+  return index;
+}
+
+test("a non-resident seller keeps its Italian Partita IVA and foreign Sede", () => {
+  const xml = buildInvoice({ ...base, seller: germanSeller }).xml;
+  assert.match(
+    compact(xml),
+    /<CedentePrestatore><DatiAnagrafici><IdFiscaleIVA><IdPaese>IT<\/IdPaese><IdCodice>20000000008<\/IdCodice>/,
+  );
+  assert.match(compact(xml), /<Sede>.*<Nazione>DE<\/Nazione><\/Sede>/s);
+  assert.ok(!xml.includes("StabileOrganizzazione"));
+  assert.ok(!xml.includes("RappresentanteFiscale"));
+});
+
+test("a fiscal representative renders between seller and buyer", () => {
+  const xml = buildInvoice(withRepresentative).xml;
+  const cedente = indexOfTag(xml, "CedentePrestatore");
+  const rep = indexOfTag(xml, "RappresentanteFiscale");
+  const buyer = indexOfTag(xml, "CessionarioCommittente");
+  assert.ok(cedente < rep && rep < buyer);
+  assert.match(
+    compact(xml),
+    /<RappresentanteFiscale><DatiAnagrafici><IdFiscaleIVA><IdPaese>IT<\/IdPaese><IdCodice>10000000009<\/IdCodice><\/IdFiscaleIVA><CodiceFiscale>RSSMRA80A01H501U<\/CodiceFiscale><Anagrafica><Denominazione>Rappresentanza Fiscale Srl<\/Denominazione><\/Anagrafica><\/DatiAnagrafici><\/RappresentanteFiscale>/,
+  );
+});
+
+test("a foreign fiscal representative uses its own country and VAT number", () => {
+  const xml = buildInvoice({
+    ...base,
+    seller: {
+      ...germanSeller,
+      fiscalRepresentative: {
+        vatNumber: "NL 123456789B01",
+        vatCountry: "NL",
+        name: "Vertegenwoordiger BV",
+      },
+    },
+  }).xml;
+  assert.match(
+    compact(xml),
+    /<RappresentanteFiscale><DatiAnagrafici><IdFiscaleIVA><IdPaese>NL<\/IdPaese><IdCodice>123456789B01<\/IdCodice>/,
+  );
+});
+
+test("a permanent establishment renders after the seller Sede", () => {
+  const xml = buildInvoice(withEstablishment).xml;
+  const sede = indexOfTag(xml, "Sede");
+  const establishment = indexOfTag(xml, "StabileOrganizzazione");
+  assert.ok(sede < establishment);
+  assert.ok(establishment < indexOfTag(xml, "CessionarioCommittente"));
+  assert.match(
+    compact(xml),
+    /<StabileOrganizzazione><Indirizzo>Via Torino 3<\/Indirizzo><CAP>20123<\/CAP><Comune>Milano<\/Comune><Provincia>MI<\/Provincia><Nazione>IT<\/Nazione><\/StabileOrganizzazione>/,
+  );
+});
+
+test("seller permanent establishment and representative rules report their paths", () => {
+  assert.deepEqual(
+    issues({
+      ...base,
+      seller: { ...base.seller, permanentEstablishment: italianEstablishment },
+    }),
+    ["seller.permanentEstablishment"],
+  );
+  assert.deepEqual(
+    issues({
+      ...base,
+      seller: {
+        ...base.seller,
+        fiscalRepresentative: { vatNumber: "10000000009", name: "Rappr" },
+      },
+    }),
+    ["seller.fiscalRepresentative"],
+  );
+  assert.deepEqual(
+    issues({
+      ...base,
+      seller: {
+        ...withEstablishment.seller,
+        permanentEstablishment: {
+          ...italianEstablishment,
+          country: "FR",
+          postalCode: undefined,
+          province: undefined,
+        },
+      },
+    }),
+    ["seller.permanentEstablishment.country"],
+  );
+  assert.deepEqual(
+    issues({
+      ...base,
+      seller: {
+        ...withEstablishment.seller,
+        fiscalRepresentative: { vatNumber: "10000000009", name: "Rappr" },
+      },
+    }),
+    ["seller.fiscalRepresentative"],
+  );
+  assert.deepEqual(
+    issues({
+      ...base,
+      seller: {
+        ...germanSeller,
+        fiscalRepresentative: {
+          vatNumber: "12345678901",
+          fiscalCode: "bad",
+          name: "",
+        },
+      },
+    }),
+    [
+      "seller.fiscalRepresentative.vatNumber",
+      "seller.fiscalRepresentative.fiscalCode",
+      "seller.fiscalRepresentative.name",
+    ],
+  );
+  assert.deepEqual(
+    issues({
+      ...base,
+      seller: {
+        ...withEstablishment.seller,
+        permanentEstablishment: { ...italianEstablishment, postalCode: "1" },
+      },
+    }),
+    ["seller.permanentEstablishment.postalCode"],
+  );
+});
+
+test("a buyer permanent establishment and representative render in schema order", () => {
+  const buyer = {
+    ...foreign.buyer,
+    permanentEstablishment: italianEstablishment,
+    fiscalRepresentative: undefined,
+  };
+  const withPe = buildInvoice({ ...foreign, buyer }).xml;
+  assert.ok(
+    indexOfTag(withPe, "Sede", indexOfTag(withPe, "CessionarioCommittente")) <
+      indexOfTag(
+        withPe,
+        "StabileOrganizzazione",
+        indexOfTag(withPe, "CessionarioCommittente"),
+      ),
+  );
+  const withRep = buildInvoice({
+    ...foreign,
+    buyer: {
+      ...foreign.buyer,
+      fiscalRepresentative: { vatNumber: "10000000009", name: "Rappr Srl" },
+    },
+  }).xml;
+  const from = indexOfTag(withRep, "CessionarioCommittente");
+  assert.ok(
+    indexOfTag(withRep, "Sede", from) <
+      indexOfTag(withRep, "RappresentanteFiscale", from),
+  );
+  assert.match(
+    compact(withRep),
+    /<RappresentanteFiscale><IdFiscaleIVA><IdPaese>IT<\/IdPaese><IdCodice>10000000009<\/IdCodice><\/IdFiscaleIVA><Denominazione>Rappr Srl<\/Denominazione><\/RappresentanteFiscale><\/CessionarioCommittente>/,
+  );
+});
+
+test("buyer permanent establishment and representative rules report their paths", () => {
+  assert.deepEqual(
+    issues({
+      ...base,
+      buyer: { ...base.buyer, permanentEstablishment: italianEstablishment },
+    }),
+    ["buyer.permanentEstablishment"],
+  );
+  assert.deepEqual(
+    issues({
+      ...base,
+      buyer: {
+        ...base.buyer,
+        fiscalRepresentative: { vatNumber: "10000000009", name: "R" },
+      },
+    }),
+    ["buyer.fiscalRepresentative"],
+  );
+  assert.deepEqual(
+    issues({
+      ...foreign,
+      buyer: {
+        ...foreign.buyer,
+        permanentEstablishment: {
+          street: "Rue 1",
+          city: "Lyon",
+          country: "FR",
+        },
+      },
+    }),
+    ["buyer.permanentEstablishment.country"],
+  );
+  assert.deepEqual(
+    issues({
+      ...foreign,
+      buyer: {
+        ...foreign.buyer,
+        permanentEstablishment: italianEstablishment,
+        fiscalRepresentative: { vatNumber: "10000000009", name: "R" },
+      },
+    }),
+    ["buyer.fiscalRepresentative"],
+  );
+  assert.deepEqual(
+    issues({
+      ...foreign,
+      buyer: {
+        ...foreign.buyer,
+        fiscalRepresentative: { vatNumber: "123", name: "R" },
+      },
+    }),
+    ["buyer.fiscalRepresentative.vatNumber"],
+  );
+});
+
 // `npm run test:schema` downloads the official schema and sets FATTURAPA_XSD, so the generated
 // files are validated with xmllint.
 const xsd = process.env.FATTURAPA_XSD;
@@ -1061,6 +1328,25 @@ test(
           ],
         }).xml,
         foreign: buildInvoice(foreign).xml,
+        fiscalRepresentative: buildInvoice(withRepresentative).xml,
+        permanentEstablishment: buildInvoice(withEstablishment).xml,
+        buyerRepresentative: buildInvoice({
+          ...foreign,
+          buyer: {
+            ...foreign.buyer,
+            fiscalRepresentative: {
+              vatNumber: "10000000009",
+              name: "Rappr Srl",
+            },
+          },
+        }).xml,
+        buyerEstablishment: buildInvoice({
+          ...foreign,
+          buyer: {
+            ...foreign.buyer,
+            permanentEstablishment: italianEstablishment,
+          },
+        }).xml,
         publicAdministration: buildInvoice(publicAdministration).xml,
         professional: buildInvoice(professional).xml,
         professionalInps: buildInvoice(professionalInps).xml,
