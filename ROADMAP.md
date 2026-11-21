@@ -2,12 +2,8 @@
 
 Planned, roughly in order:
 
-- **Document-level discounts and surcharges**: a discount or surcharge on the whole invoice, spread over the VAT rates so the VAT summary stays consistent.
-- **Withholding tax and pension funds** (ritenuta d'acconto, cassa previdenziale), for professionals' invoices.
-- **Instalments**: more than one payment with its own due date and amount.
-- **Public-administration invoices** (FPA12), with CIG, CUP and the PA recipient codes.
-- **Fiscal representatives** and foreign sellers with an Italian VAT number.
-- **Reading invoices**: parse a received FatturaPA file into the same shapes.
-- **PDF rendering** of an invoice for the courtesy copy, as a separate package.
+- **Natural persons**: buyers and sellers identified by `Nome` and `Cognome` instead of a company name, for consumer (B2C) invoices and sole traders.
+- **More document types**: fees (TD06), reverse-charge integrations and self-invoices (TD16–TD19), and the other TD codes SDI accepts.
+- **Transport and delivery notes**: `DatiTrasporto` and `DatiDDT` for deferred invoices.
 
 Signing and SDI transmission stay out of scope: they belong to the SDI channel or intermediary you use.

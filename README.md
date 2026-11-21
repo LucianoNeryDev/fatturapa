@@ -1,6 +1,6 @@
 # fatturapa
 
-Build and validate Italian electronic invoices (FatturaPA FPR12, private sector) in TypeScript. You pass amounts in integer euro cents; the library computes the totals the way SDI recomputes them, checks the rules SDI rejects invoices for, and returns the XML file with its SDI file name. Zero runtime dependencies.
+Build, validate and read Italian electronic invoices (FatturaPA FPR12 and FPA12) in TypeScript. You pass amounts in integer euro cents; the library computes the totals the way SDI recomputes them, checks the rules SDI rejects invoices for, and returns the XML file with its SDI file name. Zero runtime dependencies.
 
 I wrote it for a B2B marketplace that issues invoices on its sellers' behalf. Most FatturaPA packages turn a JSON tree you've already filled into XML, so the totals, the VAT summary and the consistency checks are left to you. This one takes the business data and owns the arithmetic.
 
@@ -62,18 +62,24 @@ const { xml, fileName, totalCents } = buildInvoice({
   - credit-note references
   - dates and lengths
   - characters outside Latin-1; typographic quotes and dashes become ASCII
-- **Discounts and surcharges.** Percentages or per-unit amounts on each line, applied in cascade (`ScontoMaggiorazione`). The line total is computed exactly and rounded once.
-- **Foreign buyers.** Foreign tax identifier, recipient code `XXXXXXX` and CAP `00000`, with the foreign postal code kept next to the city.
+- **Discounts and surcharges.** Percentages or per-unit amounts on each line, applied in cascade (`ScontoMaggiorazione`), and discounts or surcharges on the whole invoice, spread over the VAT rates as `SC`/`AC` lines so the VAT summary stays consistent.
+- **Withholding tax and pension funds.** Ritenute (RT01–RT06) and casse previdenziali (TC01–TC22), with the net amount payable after withholdings and split payment.
+- **Payment.** Bank details, payment terms and instalments that add up exactly to the amount payable.
+- **Public administration.** FPA12 invoices with the IPA office code, CIG, CUP, contract and agreement references.
+- **Foreign parties.** Foreign buyers (tax identifier, recipient code `XXXXXXX`, CAP `00000`), non-resident sellers with an Italian VAT number, fiscal representatives and permanent establishments.
 - **Document types.** Invoices (TD01), credit notes (TD04), debit notes (TD05) and deferred invoices (TD24).
 - **Third-party issuing.** A platform can issue in the seller's name (`SoggettoEmittente` TZ).
-- **Other content.** Automatic virtual stamp duty, purchase-order references and bank-transfer payment details.
+- **Other content.** Automatic virtual stamp duty and purchase-order references.
+- **Reading.** `parseInvoice` reads received XML and `.p7m` files into the same input shape, with the declared amounts, the attachments and a list of the elements it can't represent.
 - **Helpers.** `allocateCents` splits an amount proportionally with parts that add up exactly; the identifier validators are exported too.
 
 Generated files validate against the official FatturaPA 1.2.2 schema; `npm run test:schema` checks it.
 
 It does **not** sign or transmit invoices. Send the XML through an SDI intermediary or your own SDI channel. It is not tax advice either: the VAT rates, natures and legal references on your lines are yours to choose with your accountant.
 
-Not supported yet: document-level discounts, public-administration invoices (FPA12), withholding tax (ritenuta), pension funds (cassa previdenziale), instalments, fiscal representatives, and parsing received invoices. See the [roadmap](ROADMAP.md).
+Not supported yet: buyers and sellers who are natural persons (`Nome` and `Cognome`), document types other than TD01, TD04, TD05 and TD24, and transport or delivery-note data. See the [roadmap](ROADMAP.md).
+
+The PDF courtesy copy is a separate package, [`@lucianonerydev/fatturapa-pdf`](packages/pdf/README.md).
 
 ## Install
 
@@ -85,7 +91,7 @@ It needs Node.js 20 or later and ships ES modules with type declarations.
 
 ## Documentation
 
-- [Guide](docs/guide.md): every input field, the computation and validation rules, foreign buyers, discounts, stamp duty, credit notes, errors and helpers.
+- [Guide](docs/guide.md): every input field, the computation and validation rules, withholdings and pension funds, public administration, foreign parties, discounts, stamp duty, credit notes, reading invoices, errors and helpers.
 - [Changelog](CHANGELOG.md)
 
 ## Development
