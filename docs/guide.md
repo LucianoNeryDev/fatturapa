@@ -114,15 +114,19 @@ Issue paths name the reference: `orderReference.date` for a single object, `cont
 
 ### Payment
 
-| Field         | Required | Description                                                                                                      |
-| ------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
-| `method`      | yes      | `ModalitaPagamento`, e.g. `MP05` bank transfer, `MP08` card, `MP01` cash.                                        |
-| `dueDate`     |          | `YYYY-MM-DD`.                                                                                                    |
-| `iban`        |          | Checked with its mod-97 checksum; Italian IBANs must have 27 characters. Use `compactIdentifier` on typed input. |
-| `bank`        |          | Bank name, up to 80 characters.                                                                                  |
-| `beneficiary` |          | Up to 200 characters, when the payee is not the seller.                                                          |
+| Field          | Required | Description                                                                                                                                   |
+| -------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `method`       | yes      | `ModalitaPagamento`, e.g. `MP05` bank transfer, `MP08` card, `MP01` cash.                                                                     |
+| `terms`        |          | `"full"` (`TP02`), `"installments"` (`TP01`) or `"advance"` (`TP03`). Defaults to `"installments"` with `installments`, else `"full"`.        |
+| `dueDate`      |          | `YYYY-MM-DD`. Not allowed with `installments`: give each instalment its own date.                                                             |
+| `iban`         |          | Checked with its mod-97 checksum; Italian IBANs must have 27 characters. Use `compactIdentifier` on typed input.                              |
+| `bank`         |          | Bank name, up to 80 characters.                                                                                                               |
+| `beneficiary`  |          | Up to 200 characters, when the payee is not the seller.                                                                                       |
+| `installments` |          | `[{ dueDate?, amountCents?, method?, iban?, bank?, beneficiary? }]`: one `DettaglioPagamento` each. `terms: "installments"` needs at least 2. |
 
 The invoice asks for full payment (`TP02`) of the amount payable, `payableCents`: the document total less the [withholdings](#withholding-tax-and-pension-funds), and less the VAT with split payment (`vatExigibility: "S"`).
+
+Each instalment inherits `method`, `iban`, `bank` and `beneficiary` from the payment unless it sets its own. Give `amountCents` on every instalment or on none. Without amounts, `payableCents` is split equally, and the extra cents go to the first instalments (largest-remainder method, `allocateCents`), so 104.15 EUR in three gives 34.72, 34.72 and 34.71. With amounts, they must add up exactly to `payableCents`, which is the net amount after withholdings. Issues name the instalment, e.g. `payment.installments[1].iban`.
 
 ### Third-party issuer
 

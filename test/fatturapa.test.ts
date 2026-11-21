@@ -14,6 +14,8 @@ import {
   isValidRecipientCode,
   isValidVatNumber,
   type InvoiceInput,
+  type Payment,
+  type PaymentMethod,
 } from "../src/index.js";
 
 const base: InvoiceInput = {
@@ -1077,6 +1079,8 @@ test("allocation splits cents proportionally and always adds up", () => {
     );
 });
 
+const iban2 = "DE89370400440532013000";
+
 /** The XML without the indentation between tags, to match whole elements. */
 function compact(xml: string): string {
   return xml.replace(/>\s+</g, "><");
@@ -1302,6 +1306,178 @@ test("buyer permanent establishment and representative rules report their paths"
   );
 });
 
+function amounts(xml: string): string[] {
+  return [...xml.matchAll(/<ImportoPagamento>([^<]+)</g)].map((m) => m[1]!);
+}
+
+test("equal instalments split the amount payable and put the extra cents first", () => {
+  const invoice = buildInvoice({
+    ...base,
+    payment: {
+      method: "MP05",
+      iban: "IT60X0542811101000000123456",
+      installments: [
+        { dueDate: "2026-12-31" },
+        { dueDate: "2027-01-31" },
+        { dueDate: "2027-02-28" },
+      ],
+    },
+  });
+  assert.equal(invoice.payableCents, 10415);
+  assert.deepEqual(amounts(invoice.xml), ["34.72", "34.72", "34.71"]);
+  assert.match(invoice.xml, /<CondizioniPagamento>TP01<\/CondizioniPagamento>/);
+  assert.equal(invoice.xml.match(/<DettaglioPagamento>/g)!.length, 3);
+  assert.match(
+    compact(invoice.xml),
+    /<DettaglioPagamento><ModalitaPagamento>MP05<\/ModalitaPagamento><DataScadenzaPagamento>2026-12-31<\/DataScadenzaPagamento><ImportoPagamento>34\.72<\/ImportoPagamento><IBAN>IT60X0542811101000000123456<\/IBAN><\/DettaglioPagamento>/,
+  );
+});
+
+test("explicit instalment amounts render as given and must add up", () => {
+  const withAmounts = (...cents: number[]): InvoiceInput => ({
+    ...base,
+    payment: {
+      method: "MP05",
+      installments: cents.map((amountCents) => ({ amountCents })),
+    },
+  });
+  assert.deepEqual(amounts(buildInvoice(withAmounts(5000, 5415)).xml), [
+    "50.00",
+    "54.15",
+  ]);
+  assert.deepEqual(issues(withAmounts(5000, 5000)), ["payment.installments"]);
+  assert.throws(
+    () => buildInvoice(withAmounts(5000, 5000)),
+    /must add up to the amount payable, 104\.15 EUR/,
+  );
+  assert.deepEqual(
+    issues({
+      ...base,
+      payment: {
+        method: "MP05",
+        installments: [{ amountCents: 5000 }, {}],
+      },
+    }),
+    ["payment.installments"],
+  );
+  assert.deepEqual(issues(withAmounts(0, 10415)), [
+    "payment.installments[0].amountCents",
+  ]);
+  assert.deepEqual(issues(withAmounts(1.5, 10413.5)), [
+    "payment.installments[0].amountCents",
+    "payment.installments[1].amountCents",
+  ]);
+});
+
+test("instalments report their validation issues with paths", () => {
+  const withPayment = (payment: Payment): InvoiceInput => ({
+    ...base,
+    payment,
+  });
+  assert.deepEqual(
+    issues(
+      withPayment({
+        method: "MP05",
+        terms: "installments",
+        installments: [{}],
+      }),
+    ),
+    ["payment.installments"],
+  );
+  assert.deepEqual(issues(withPayment({ method: "MP05", installments: [] })), [
+    "payment.installments",
+  ]);
+  assert.deepEqual(
+    issues(withPayment({ method: "MP05", terms: "installments" })),
+    ["payment.installments"],
+  );
+  assert.deepEqual(
+    issues(
+      withPayment({
+        method: "MP05",
+        dueDate: "2026-12-31",
+        installments: [{}, {}],
+      }),
+    ),
+    ["payment.dueDate"],
+  );
+  assert.deepEqual(
+    issues(
+      withPayment({
+        method: "MP05",
+        installments: [
+          { iban: "IT00X0000000000000000000000" },
+          { dueDate: "2026-02-30", method: "XX" as PaymentMethod },
+          { bank: "x".repeat(81), beneficiary: "y".repeat(201) },
+        ],
+      }),
+    ),
+    [
+      "payment.installments[0].iban",
+      "payment.installments[1].dueDate",
+      "payment.installments[1].method",
+      "payment.installments[2].bank",
+      "payment.installments[2].beneficiary",
+    ],
+  );
+});
+
+test("instalments inherit the payment's details and can override them", () => {
+  const { xml } = buildInvoice({
+    ...base,
+    payment: {
+      method: "MP05",
+      iban: "IT60X0542811101000000123456",
+      bank: "Banca Uno",
+      beneficiary: "Mercato Digitale Srl",
+      installments: [
+        {},
+        {
+          method: "MP08",
+          iban: iban2,
+          bank: "Banca Due",
+          beneficiary: "Altro",
+        },
+      ],
+    },
+  });
+  const [first, second] = compact(xml).match(
+    /<DettaglioPagamento>.*?<\/DettaglioPagamento>/g,
+  )!;
+  assert.match(first!, /<Beneficiario>Mercato Digitale Srl</);
+  assert.match(first!, /<ModalitaPagamento>MP05</);
+  assert.match(first!, /<IstitutoFinanziario>Banca Uno</);
+  assert.match(first!, /<IBAN>IT60X0542811101000000123456</);
+  assert.match(second!, /<Beneficiario>Altro</);
+  assert.match(second!, /<ModalitaPagamento>MP08</);
+  assert.match(second!, /<IstitutoFinanziario>Banca Due</);
+  assert.ok(second!.includes(`<IBAN>${iban2}<`));
+});
+
+test("instalments split the net amount payable, after withholdings", () => {
+  const invoice = buildInvoice({
+    ...professional,
+    payment: { method: "MP05", installments: [{}, {}, {}] },
+  });
+  const net = invoice.payableCents;
+  assert.ok(net < invoice.totalCents);
+  const parts = amounts(invoice.xml).map((a) => Math.round(Number(a) * 100));
+  assert.equal(
+    parts.reduce((n, a) => n + a, 0),
+    net,
+  );
+  assert.ok(Math.max(...parts) - Math.min(...parts) <= 1);
+});
+
+test("advance terms render TP03", () => {
+  const { xml } = buildInvoice({
+    ...base,
+    payment: { method: "MP05", terms: "advance" },
+  });
+  assert.match(xml, /<CondizioniPagamento>TP03<\/CondizioniPagamento>/);
+  assert.equal(xml.match(/<DettaglioPagamento>/g)!.length, 1);
+});
+
 // `npm run test:schema` downloads the official schema and sets FATTURAPA_XSD, so the generated
 // files are validated with xmllint.
 const xsd = process.env.FATTURAPA_XSD;
@@ -1353,6 +1529,19 @@ test(
         splitPaymentWithholding: buildInvoice(
           professionalToPublicAdministration,
         ).xml,
+        installments: buildInvoice({
+          ...professional,
+          payment: {
+            method: "MP05",
+            terms: "installments",
+            iban: "IT60X0542811101000000123456",
+            installments: [
+              { dueDate: "2026-12-31" },
+              { dueDate: "2027-01-31", method: "MP08", bank: "Banca Due" },
+              { dueDate: "2027-02-28", beneficiary: "Studio Associato" },
+            ],
+          },
+        }).xml,
         flatRatePensionFund: buildInvoice({
           ...base,
           seller: { ...base.seller, taxRegime: "RF19" },
