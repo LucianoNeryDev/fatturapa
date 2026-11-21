@@ -163,6 +163,22 @@ export interface PriceAdjustment {
   amountCents?: number;
 }
 
+/**
+ * A discount or surcharge on the whole invoice. It is applied to the sum of the line totals, in
+ * cascade with the other document adjustments, and spread over the VAT rates in proportion to
+ * their taxable amounts. Each share is rendered as a discount (SC) or surcharge (AC) line.
+ */
+export interface DocumentAdjustment {
+  /** Discount (default) or surcharge. */
+  kind?: "discount" | "surcharge";
+  /** Percentage of the running taxable amount with at most 2 decimals. Set this or `amountCents`. */
+  percent?: number;
+  /** Total amount in euro cents, before VAT. Set this or `percent`. */
+  amountCents?: number;
+  /** Text of the generated lines, default "Sconto" or "Maggiorazione". */
+  description?: string;
+}
+
 export interface InvoiceLine {
   description: string;
   /** Decimal quantity with up to 8 decimals. Omit for a single service or charge. */
@@ -200,6 +216,8 @@ export interface InvoiceInput {
   issuer?: ThirdPartyIssuer;
   transmitter: Transmitter;
   lines: InvoiceLine[];
+  /** Discounts and surcharges on the whole invoice, applied in order after the lines. */
+  adjustments?: DocumentAdjustment[];
   /** VAT exigibility: immediate (default), deferred or split payment. */
   vatExigibility?: "I" | "D" | "S";
   /** Free text (Causale), split into 200-character elements. */
@@ -226,6 +244,13 @@ export interface VatSummary {
 
 export interface InvoiceTotals {
   lines: { lineTotalCents: number }[];
+  /** Lines generated from the document adjustments, in rendered order after `lines`. */
+  adjustmentLines: {
+    adjustmentIndex: number;
+    vatRate: number;
+    nature?: Nature;
+    amountCents: number;
+  }[];
   summary: VatSummary[];
   taxableCents: number;
   vatCents: number;

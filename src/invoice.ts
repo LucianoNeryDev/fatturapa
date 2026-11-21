@@ -1,5 +1,7 @@
 import {
   type Adjustment,
+  allocateCents,
+  divideRounded,
   formatCents,
   formatQuantity,
   lineTotal,
@@ -164,13 +166,20 @@ function foreignVatNumber(value: string, idCountry: string): string {
   return prefix ? compact.slice(prefix.length) : compact;
 }
 
+/** Formats basis points as a short percentage: 1000 → "10", 250 → "2.5". */
+function formatPercent(basisPoints: number): string {
+  return formatCents(basisPoints)
+    .replace(/(\.\d*?)0+$/, "$1")
+    .replace(/\.$/, "");
+}
+
 /**
- * Computes line totals and the VAT summary per rate and nature, as SDI recomputes them:
- * VAT is rounded once per rate on the summed taxable amount.
+ * Computes the totals and collects the document adjustments that have no positive taxable
+ * amount to apply to (reported by buildInvoice with their input path).
  */
-export function computeTotals(
-  input: Pick<InvoiceInput, "lines" | "stampDuty">,
-): InvoiceTotals {
+function totalsWithIssues(
+  input: Pick<InvoiceInput, "lines" | "stampDuty" | "adjustments">,
+): { totals: InvoiceTotals; unappliable: number[] } {
   const groups = new Map<string, VatSummary>();
   const lines = input.lines.map((line) => {
     const quantity =
@@ -192,18 +201,54 @@ export function computeTotals(
     groups.set(key, group);
     return { lineTotalCents };
   });
-  const summary = [...groups.values()]
-    .map((group) => ({
-      ...group,
-      vatCents: vatAmount(
-        group.taxableCents,
-        rateBasisPoints(group.vatRate) ?? 0,
-      ),
-    }))
-    .sort(
-      (a, b) =>
-        b.vatRate - a.vatRate || (a.nature ?? "").localeCompare(b.nature ?? ""),
-    );
+  const sorted = [...groups.values()].sort(
+    (a, b) =>
+      b.vatRate - a.vatRate || (a.nature ?? "").localeCompare(b.nature ?? ""),
+  );
+  // Document adjustments are spread over the groups in proportion to their taxable amount from
+  // the lines alone; each one is computed on the running taxable amount (cascade).
+  const weights = sorted.map((g) => Math.max(g.taxableCents, 0));
+  const adjustmentLines: InvoiceTotals["adjustmentLines"] = [];
+  const unappliable: number[] = [];
+  let running = BigInt(lines.reduce((n, l) => n + l.lineTotalCents, 0));
+  (input.adjustments ?? []).forEach((adjustment, adjustmentIndex) => {
+    if (!weights.some((w) => w > 0)) {
+      unappliable.push(adjustmentIndex);
+      return;
+    }
+    const sign = adjustment.kind === "surcharge" ? 1 : -1;
+    const absolute =
+      adjustment.percent !== undefined
+        ? Math.abs(
+            Number(
+              divideRounded(
+                running *
+                  BigInt(rateBasisPoints(adjustment.percent, maxPercent) ?? 0),
+                10_000n,
+              ),
+            ),
+          )
+        : (adjustment.amountCents ?? 0);
+    allocateCents(absolute, weights).forEach((part, i) => {
+      if (!part) return;
+      const group = sorted[i]!;
+      group.taxableCents += sign * part;
+      running += BigInt(sign * part);
+      adjustmentLines.push({
+        adjustmentIndex,
+        vatRate: group.vatRate,
+        ...(group.nature && { nature: group.nature }),
+        amountCents: sign * part,
+      });
+    });
+  });
+  const summary = sorted.map((group) => ({
+    ...group,
+    vatCents: vatAmount(
+      group.taxableCents,
+      rateBasisPoints(group.vatRate) ?? 0,
+    ),
+  }));
   const taxableCents = summary.reduce((n, s) => n + s.taxableCents, 0);
   const vatCents = summary.reduce((n, s) => n + s.vatCents, 0);
   const stampable = summary
@@ -214,13 +259,28 @@ export function computeTotals(
       ? stampable > stampDutyThresholdCents
       : input.stampDuty;
   return {
-    lines,
-    summary,
-    taxableCents,
-    vatCents,
-    totalCents: taxableCents + vatCents,
-    stampDutyCents: stampDuty ? stampDutyCents : 0,
+    totals: {
+      lines,
+      adjustmentLines,
+      summary,
+      taxableCents,
+      vatCents,
+      totalCents: taxableCents + vatCents,
+      stampDutyCents: stampDuty ? stampDutyCents : 0,
+    },
+    unappliable,
   };
+}
+
+/**
+ * Computes line totals and the VAT summary per rate and nature, as SDI recomputes them:
+ * VAT is rounded once per rate on the summed taxable amount. Document adjustments are
+ * spread over the rates and included.
+ */
+export function computeTotals(
+  input: Pick<InvoiceInput, "lines" | "stampDuty" | "adjustments">,
+): InvoiceTotals {
+  return totalsWithIssues(input).totals;
 }
 
 /**
@@ -322,6 +382,33 @@ export function buildInvoice(input: InvoiceInput): Invoice {
   if (!input.lines.length) check.add("lines", "needs at least one line");
   if (input.lines.length > 9999)
     check.add("lines", "allows at most 9999 lines");
+  const adjustmentDescriptions = (input.adjustments ?? []).map(
+    (adjustment, index) => {
+      const at = `adjustments[${index}]`;
+      const { kind = "discount", percent, amountCents } = adjustment;
+      if (kind !== "discount" && kind !== "surcharge")
+        check.add(`${at}.kind`, 'must be "discount" or "surcharge"');
+      if ((percent === undefined) === (amountCents === undefined))
+        check.add(at, "needs exactly one of percent and amountCents");
+      else if (percent !== undefined) {
+        const bp = rateBasisPoints(
+          percent,
+          kind === "discount" ? 100 : maxPercent,
+        );
+        if (!bp)
+          check.add(
+            `${at}.percent`,
+            `must be above 0 and at most ${kind === "discount" ? 100 : maxPercent}, with at most 2 decimals`,
+          );
+      } else if (!Number.isSafeInteger(amountCents) || amountCents! <= 0)
+        check.add(`${at}.amountCents`, "must be a positive integer");
+      return check.optionalText(
+        `${at}.description`,
+        adjustment.description,
+        1000,
+      );
+    },
+  );
   const lines = input.lines.map((line, index) => {
     const path = `lines[${index}]`;
     const quantity =
@@ -425,7 +512,15 @@ export function buildInvoice(input: InvoiceInput): Invoice {
 
   if (check.issues.length) throw new FatturaPAError(check.issues);
 
-  const totals = computeTotals(input);
+  const { totals, unappliable } = totalsWithIssues(input);
+  for (const index of unappliable)
+    check.add(
+      `adjustments[${index}]`,
+      "needs a positive taxable amount to apply to",
+    );
+  if (input.lines.length + totals.adjustmentLines.length > 9999)
+    check.add("adjustments", "would take the invoice over 9999 lines");
+  if (check.issues.length) throw new FatturaPAError(check.issues);
   if (type === "TD01" && totals.totalCents < 0)
     throw new FatturaPAError([
       { path: "lines", message: "an invoice total cannot be negative" },
@@ -608,6 +703,46 @@ export function buildInvoice(input: InvoiceInput): Invoice {
                       "PrezzoTotale",
                       formatCents(totals.lines[index]!.lineTotalCents),
                     ],
+                    [
+                      "AliquotaIVA",
+                      formatCents(rateBasisPoints(line.vatRate)!),
+                    ],
+                    ["Natura", line.nature],
+                  ],
+                ];
+              }),
+              ...totals.adjustmentLines.map((line, index): XmlNode => {
+                const adjustment = input.adjustments![line.adjustmentIndex]!;
+                const surcharge = adjustment.kind === "surcharge";
+                const spans =
+                  totals.adjustmentLines.filter(
+                    (l) => l.adjustmentIndex === line.adjustmentIndex,
+                  ).length > 1;
+                const suffix = [
+                  adjustment.percent === undefined
+                    ? ""
+                    : ` ${formatPercent(rateBasisPoints(adjustment.percent, maxPercent)!)}%`,
+                  !spans
+                    ? ""
+                    : line.nature
+                      ? ` (${line.nature})`
+                      : ` (IVA ${formatPercent(rateBasisPoints(line.vatRate)!)}%)`,
+                ].join("");
+                const name =
+                  adjustmentDescriptions[line.adjustmentIndex] ??
+                  (surcharge ? "Maggiorazione" : "Sconto");
+                const price = formatCents(line.amountCents);
+                return [
+                  "DettaglioLinee",
+                  [
+                    ["NumeroLinea", String(input.lines.length + index + 1)],
+                    ["TipoCessionePrestazione", surcharge ? "AC" : "SC"],
+                    [
+                      "Descrizione",
+                      name.slice(0, 1000 - suffix.length) + suffix,
+                    ],
+                    ["PrezzoUnitario", price],
+                    ["PrezzoTotale", price],
                     [
                       "AliquotaIVA",
                       formatCents(rateBasisPoints(line.vatRate)!),

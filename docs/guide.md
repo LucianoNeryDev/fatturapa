@@ -20,22 +20,23 @@ All amounts are integer euro cents (`2490` is €24.90). Quantities and percenta
 
 ### `InvoiceInput`
 
-| Field            | Required   | Description                                                                                       |
-| ---------------- | ---------- | ------------------------------------------------------------------------------------------------- |
-| `type`           |            | `TD01` invoice (default), `TD04` credit note, `TD05` debit note, `TD24` deferred invoice.         |
-| `number`         | yes        | Invoice number, up to 20 ASCII characters with at least one digit, e.g. `12/A`.                   |
-| `date`           | yes        | Issue date, `YYYY-MM-DD`.                                                                         |
-| `seller`         | yes        | The supplier (`CedentePrestatore`), see [Seller](#seller).                                        |
-| `buyer`          | yes        | The customer (`CessionarioCommittente`), see [Buyer](#buyer).                                     |
-| `issuer`         |            | A third party issuing on the seller's behalf, see [Third-party issuer](#third-party-issuer).      |
-| `transmitter`    | yes        | Who sends the file to SDI, see [Transmitter and file name](#transmitter-and-file-name).           |
-| `lines`          | yes        | 1 to 9999 lines, see [Line](#line).                                                               |
-| `vatExigibility` |            | `I` immediate (default), `D` deferred, `S` split payment.                                         |
-| `description`    |            | Free text (`Causale`), split into 200-character elements at word boundaries.                      |
-| `orderReference` |            | `{ id, date? }`: the buyer's purchase order (`DatiOrdineAcquisto`), id up to 20 ASCII characters. |
-| `linkedInvoices` | TD04, TD05 | `[{ number, date }]`: the invoices a credit or debit note corrects (`DatiFattureCollegate`).      |
-| `payment`        |            | See [Payment](#payment).                                                                          |
-| `stampDuty`      |            | `"auto"` (default), `true` or `false`. See [Stamp duty](#stamp-duty).                             |
+| Field            | Required   | Description                                                                                               |
+| ---------------- | ---------- | --------------------------------------------------------------------------------------------------------- |
+| `type`           |            | `TD01` invoice (default), `TD04` credit note, `TD05` debit note, `TD24` deferred invoice.                 |
+| `number`         | yes        | Invoice number, up to 20 ASCII characters with at least one digit, e.g. `12/A`.                           |
+| `date`           | yes        | Issue date, `YYYY-MM-DD`.                                                                                 |
+| `seller`         | yes        | The supplier (`CedentePrestatore`), see [Seller](#seller).                                                |
+| `buyer`          | yes        | The customer (`CessionarioCommittente`), see [Buyer](#buyer).                                             |
+| `issuer`         |            | A third party issuing on the seller's behalf, see [Third-party issuer](#third-party-issuer).              |
+| `transmitter`    | yes        | Who sends the file to SDI, see [Transmitter and file name](#transmitter-and-file-name).                   |
+| `lines`          | yes        | 1 to 9999 lines, see [Line](#line).                                                                       |
+| `adjustments`    |            | Discounts and surcharges on the whole invoice, see [Discounts and surcharges](#discounts-and-surcharges). |
+| `vatExigibility` |            | `I` immediate (default), `D` deferred, `S` split payment.                                                 |
+| `description`    |            | Free text (`Causale`), split into 200-character elements at word boundaries.                              |
+| `orderReference` |            | `{ id, date? }`: the buyer's purchase order (`DatiOrdineAcquisto`), id up to 20 ASCII characters.         |
+| `linkedInvoices` | TD04, TD05 | `[{ number, date }]`: the invoices a credit or debit note corrects (`DatiFattureCollegate`).              |
+| `payment`        |            | See [Payment](#payment).                                                                                  |
+| `stampDuty`      |            | `"auto"` (default), `true` or `false`. See [Stamp duty](#stamp-duty).                                     |
 
 ### Seller
 
@@ -120,6 +121,7 @@ Each line total is the unit price, after its adjustments, times the quantity, ro
 The result carries:
 
 - `lines[i].lineTotalCents`
+- `adjustmentLines`: the lines generated from document adjustments, see [below](#discounts-and-surcharges-on-the-whole-invoice)
 - `summary`: one entry per rate and nature, highest rate first, each with `taxableCents`, `vatCents` and `legalReference`
 - `taxableCents`, `vatCents`, and `totalCents` (`ImportoTotaleDocumento`)
 - `stampDutyCents`
@@ -151,7 +153,29 @@ Each adjustment has exactly one of these:
 
 `kind` is `"discount"` (default, `SC`) or `"surcharge"` (`MG`). The line total is computed exactly from the original unit price and rounded once, which keeps it within SDI's one-cent tolerance. The XML repeats the original unit price and lists each adjustment.
 
-For a discount on the whole invoice, add a negative line at each VAT rate concerned, e.g. "Sconto 5%" at -€3.36 with rate 10. Document-level `ScontoMaggiorazione` is informative only in FatturaPA and is not supported.
+#### Discounts and surcharges on the whole invoice
+
+`adjustments` on the invoice itself applies to the sum of the line totals:
+
+```ts
+{
+  // ...
+  lines: [/* €74.70 at 10%, €21.13 at 4% */],
+  adjustments: [
+    { percent: 10, description: "Sconto fedeltà" },   // 10% of the line total
+    { amountCents: 500 },                              // then €5.00 more
+  ],
+}
+```
+
+Each adjustment has `kind` (`"discount"`, the default, or `"surcharge"`), exactly one of `percent` or `amountCents`, and an optional `description` (up to 1000 characters, Latin-1).
+
+- **Cascade.** Adjustments apply in order. A `percent` is taken on the running taxable amount: the line totals, plus the effect of the adjustments before it. The amount is rounded half away from zero to the cent. A discount percent is above 0 and at most 100, a surcharge percent up to 999.99, both with at most 2 decimals. An `amountCents` is a positive amount before VAT.
+- **Allocation.** Each adjustment is split across the VAT groups (rate and nature) in proportion to the taxable amount of the lines alone, with the largest-remainder method, so the shares add up exactly to the adjustment. Groups with no positive taxable amount get nothing. If no group has one, the invoice is rejected with an issue on `adjustments[i]`.
+- **Rendering.** Each non-zero share becomes a `DettaglioLinee` after your lines, numbered on from them, with `TipoCessionePrestazione` `SC` (discount) or `AC` (surcharge), the share as signed `PrezzoUnitario` and `PrezzoTotale`, and the group's `AliquotaIVA` and `Natura`. The description is yours or "Sconto" / "Maggiorazione", followed by the percentage when it is percent-based, and by the group (`(IVA 22%)` or the nature) when the adjustment spans several groups. `totals.adjustmentLines` lists them in the same order.
+- **Totals.** The VAT summary, the total and the automatic stamp duty check include the shares. A discount larger than the invoice is only accepted on non-`TD01` documents.
+
+Why lines and not a document-level `ScontoMaggiorazione`: an unconditional discount reduces the VAT base (art. 15 DPR 633/72), so each rate needs its own reduction. A document-level `ScontoMaggiorazione` is informative in FatturaPA and would be counted twice. The library therefore spreads the discount per rate as `SC`/`AC` lines, which SDI sums into the summary as is.
 
 ### Stamp duty
 

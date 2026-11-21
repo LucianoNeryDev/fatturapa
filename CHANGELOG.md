@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Document-level discounts and surcharges (`adjustments` on the invoice), applied in cascade and spread over the VAT rates as `SC`/`AC` lines. `computeTotals` and the result gain `adjustmentLines`.
+
 ## 0.1.1 - 2026-10-21
 
 - Published on npm as `@lucianonerydev/fatturapa`. No code changes.
