@@ -17,205 +17,21 @@ import {
   type Payment,
   type PaymentMethod,
 } from "../src/index.js";
-
-const base: InvoiceInput = {
-  number: "1/MZ",
-  date: "2026-10-20",
-  seller: {
-    vatNumber: "20000000008",
-    name: "Macelleria Bresciana",
-    taxRegime: "RF01",
-    address: {
-      street: "Via Milano 12",
-      postalCode: "25126",
-      city: "Brescia",
-      province: "BS",
-    },
-  },
-  buyer: {
-    vatNumber: "10000000009",
-    name: "Trattoria Il Portico",
-    address: {
-      street: "Via Milano 10",
-      postalCode: "25126",
-      city: "Brescia",
-      province: "BS",
-    },
-  },
-  issuer: { vatNumber: "50000000005", name: "Mercato Digitale Srl" },
-  transmitter: { code: "50000000005", sequence: "00001" },
-  lines: [
-    {
-      description: "Controfiletto di manzo",
-      quantity: 3,
-      unit: "conf.",
-      unitPriceCents: 2490,
-      vatRate: 10,
-    },
-    {
-      description: "Grana Padano 18 mesi",
-      quantity: "1.25",
-      unit: "kg",
-      unitPriceCents: 1690,
-      vatRate: 4,
-    },
-  ],
-  payment: {
-    method: "MP05",
-    dueDate: "2026-11-19",
-    iban: "IT60X0542811101000000123456",
-  },
-};
-
-const discounted: InvoiceInput = {
-  ...base,
-  lines: [
-    {
-      ...base.lines[0]!,
-      adjustments: [{ percent: 10 }, { amountCents: 100 }],
-    },
-    { ...base.lines[1]!, adjustments: [{ kind: "surcharge", percent: 5 }] },
-  ],
-};
-
-const withDocumentDiscount: InvoiceInput = {
-  ...base,
-  adjustments: [{ percent: 10 }],
-};
-
-const foreign: InvoiceInput = {
-  ...base,
-  buyer: {
-    vatNumber: "DE 123456789",
-    name: "Gasthaus Zur Linde GmbH",
-    address: {
-      street: "Lindenstraße 5",
-      postalCode: "10115",
-      city: "Berlin",
-      country: "DE",
-    },
-  },
-  lines: [
-    {
-      description: "Controfiletto di manzo",
-      quantity: 3,
-      unitPriceCents: 2490,
-      vatRate: 0,
-      nature: "N3.2",
-      legalReference: "Art. 41, DL 331/1993",
-    },
-  ],
-};
-
-const germanSeller = {
-  ...base.seller,
-  name: "Fleischerei Schmidt GmbH",
-  address: {
-    street: "Hauptstraße 1",
-    postalCode: "10115",
-    city: "Berlin",
-    country: "DE",
-  },
-};
-const italianEstablishment = {
-  street: "Via Torino 3",
-  postalCode: "20123",
-  city: "Milano",
-  province: "MI",
-};
-const withRepresentative: InvoiceInput = {
-  ...base,
-  seller: {
-    ...germanSeller,
-    fiscalRepresentative: {
-      vatNumber: "10000000009",
-      fiscalCode: "RSSMRA80A01H501U",
-      name: "Rappresentanza Fiscale Srl",
-    },
-  },
-};
-const withEstablishment: InvoiceInput = {
-  ...base,
-  seller: {
-    ...germanSeller,
-    name: "Boucherie Martin SARL",
-    address: {
-      street: "Rue de la Paix 1",
-      postalCode: "75002",
-      city: "Paris",
-      country: "FR",
-    },
-    permanentEstablishment: italianEstablishment,
-  },
-};
-
-const publicAdministration: InvoiceInput = {
-  ...base,
-  format: "FPA12",
-  number: "3/PA",
-  buyer: {
-    fiscalCode: "80012000826",
-    name: "Comune di Esempio",
-    recipientCode: "UF7Q2K",
-    address: {
-      street: "Piazza Municipio 1",
-      postalCode: "25126",
-      city: "Brescia",
-      province: "BS",
-    },
-  },
-  vatExigibility: "S",
-  orderReference: { id: "ORD-2026-118", date: "2026-10-01" },
-  contractReference: [
-    {
-      id: "REP. 45/2026",
-      date: "2026-09-15",
-      lineNumbers: [1, 2],
-      itemCode: "Fornitura mensa scolastica",
-      cup: "J41B26000120004",
-      cig: "Z1A2B3C4D5",
-    },
-  ],
-};
-
-// An engineer's fee: Inarcassa's 4% integrative contribution is not subject to withholding.
-const professional: InvoiceInput = {
-  ...base,
-  number: "4/ING",
-  lines: [
-    {
-      description: "Progettazione impianto elettrico",
-      unitPriceCents: 100000,
-      vatRate: 22,
-      withholding: true,
-    },
-  ],
-  pensionFunds: [{ type: "TC04", rate: 4, vatRate: 22 }],
-  withholdings: [{ type: "RT01", rate: 20, reason: "A" }],
-};
-
-// A gestione separata professional: the 4% INPS rivalsa is subject to withholding.
-const professionalInps: InvoiceInput = {
-  ...professional,
-  pensionFunds: [
-    {
-      type: "TC22",
-      rate: 4,
-      vatRate: 22,
-      withholding: true,
-      reference: "PRAT-2026/18",
-    },
-  ],
-  stampDuty: true,
-};
-
-// A professional invoicing a public administration with split payment.
-const professionalToPublicAdministration: InvoiceInput = {
-  ...professional,
-  format: "FPA12",
-  buyer: publicAdministration.buyer,
-  vatExigibility: "S",
-};
+import {
+  base,
+  discounted,
+  foreign,
+  germanSeller,
+  italianEstablishment,
+  professional,
+  professionalInps,
+  professionalToPublicAdministration,
+  publicAdministration,
+  schemaFixtures,
+  withDocumentDiscount,
+  withEstablishment,
+  withRepresentative,
+} from "./fixtures.js";
 
 function issues(input: InvoiceInput): string[] {
   try {
@@ -1478,6 +1294,28 @@ test("advance terms render TP03", () => {
   assert.equal(xml.match(/<DettaglioPagamento>/g)!.length, 1);
 });
 
+test("a line kind renders TipoCessionePrestazione after NumeroLinea", () => {
+  const invoice = buildInvoice(schemaFixtures.lineKinds!);
+  const codes = [
+    ...compact(invoice.xml).matchAll(
+      /<NumeroLinea>(\d+)<\/NumeroLinea>(?:<TipoCessionePrestazione>(\w+)<\/TipoCessionePrestazione>)?<Descrizione>/g,
+    ),
+  ].map((m) => m[2]);
+  assert.deepEqual(codes, [undefined, undefined, "PR", "AB", "AC", "SC"]);
+  // The kind is informative: the totals still come from price and quantity.
+  assert.deepEqual(
+    invoice.lines.map((l) => l.lineTotalCents),
+    [7470, 2113, 0, -50, 500, -250],
+  );
+  assert.deepEqual(
+    issues({
+      ...base,
+      lines: [{ ...base.lines[0]!, kind: "bonus" as "discount" }],
+    }),
+    ["lines[0].kind"],
+  );
+});
+
 // `npm run test:schema` downloads the official schema and sets FATTURAPA_XSD, so the generated
 // files are validated with xmllint.
 const xsd = process.env.FATTURAPA_XSD;
@@ -1487,75 +1325,12 @@ test(
   () => {
     const dir = mkdtempSync(join(tmpdir(), "fatturapa-"));
     try {
-      const files = {
-        invoice: buildInvoice(base).xml,
-        creditNote: buildInvoice({
-          ...base,
-          type: "TD04",
-          linkedInvoices: [{ number: "1/MZ", date: "2026-10-20" }],
-        }).xml,
-        discounted: buildInvoice(discounted).xml,
-        documentDiscount: buildInvoice(withDocumentDiscount).xml,
-        documentAdjustments: buildInvoice({
-          ...withDocumentDiscount,
-          adjustments: [
-            { percent: 10 },
-            { kind: "surcharge", amountCents: 250, description: "Trasporto" },
-          ],
-        }).xml,
-        foreign: buildInvoice(foreign).xml,
-        fiscalRepresentative: buildInvoice(withRepresentative).xml,
-        permanentEstablishment: buildInvoice(withEstablishment).xml,
-        buyerRepresentative: buildInvoice({
-          ...foreign,
-          buyer: {
-            ...foreign.buyer,
-            fiscalRepresentative: {
-              vatNumber: "10000000009",
-              name: "Rappr Srl",
-            },
-          },
-        }).xml,
-        buyerEstablishment: buildInvoice({
-          ...foreign,
-          buyer: {
-            ...foreign.buyer,
-            permanentEstablishment: italianEstablishment,
-          },
-        }).xml,
-        publicAdministration: buildInvoice(publicAdministration).xml,
-        professional: buildInvoice(professional).xml,
-        professionalInps: buildInvoice(professionalInps).xml,
-        splitPaymentWithholding: buildInvoice(
-          professionalToPublicAdministration,
-        ).xml,
-        installments: buildInvoice({
-          ...professional,
-          payment: {
-            method: "MP05",
-            terms: "installments",
-            iban: "IT60X0542811101000000123456",
-            installments: [
-              { dueDate: "2026-12-31" },
-              { dueDate: "2027-01-31", method: "MP08", bank: "Banca Due" },
-              { dueDate: "2027-02-28", beneficiary: "Studio Associato" },
-            ],
-          },
-        }).xml,
-        flatRatePensionFund: buildInvoice({
-          ...base,
-          seller: { ...base.seller, taxRegime: "RF19" },
-          lines: [
-            {
-              description: "Consulenza",
-              unitPriceCents: 100000,
-              vatRate: 0,
-              nature: "N2.2",
-            },
-          ],
-          pensionFunds: [{ type: "TC22", rate: 4, vatRate: 0, nature: "N2.2" }],
-        }).xml,
-      };
+      const files = Object.fromEntries(
+        Object.entries(schemaFixtures).map(([name, input]) => [
+          name,
+          buildInvoice(input).xml,
+        ]),
+      );
       for (const [name, xml] of Object.entries(files)) {
         const file = join(dir, `${name}.xml`);
         writeFileSync(file, xml);
