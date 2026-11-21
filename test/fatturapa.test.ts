@@ -75,6 +75,11 @@ const discounted: InvoiceInput = {
   ],
 };
 
+const withDocumentDiscount: InvoiceInput = {
+  ...base,
+  adjustments: [{ percent: 10 }],
+};
+
 const foreign: InvoiceInput = {
   ...base,
   buyer: {
@@ -362,6 +367,143 @@ test("foreign buyers get their country's tax identifier, CAP 00000 and recipient
   );
 });
 
+test("a document discount is spread over the VAT rates as SC lines", () => {
+  const invoice = buildInvoice(withDocumentDiscount);
+  // Lines total 9583 (7470 at 10%, 2113 at 4%): 10% is 958, split 747 and 211.
+  assert.deepEqual(invoice.adjustmentLines, [
+    { adjustmentIndex: 0, vatRate: 10, amountCents: -747 },
+    { adjustmentIndex: 0, vatRate: 4, amountCents: -211 },
+  ]);
+  assert.equal(
+    invoice.adjustmentLines.reduce((n, l) => n + l.amountCents, 0),
+    -958,
+  );
+  assert.deepEqual(
+    invoice.summary.map((s) => [s.vatRate, s.taxableCents, s.vatCents]),
+    [
+      [10, 6723, 672],
+      [4, 1902, 76],
+    ],
+  );
+  assert.equal(invoice.taxableCents, 9583 - 958);
+  assert.equal(invoice.totalCents, 8625 + 672 + 76);
+  assert.equal(invoice.xml.match(/<TipoCessionePrestazione>SC</g)?.length, 2);
+  assert.match(
+    invoice.xml,
+    /<NumeroLinea>3<\/NumeroLinea>\s*<TipoCessionePrestazione>SC<\/TipoCessionePrestazione>\s*<Descrizione>Sconto 10% \(IVA 10%\)<\/Descrizione>\s*<PrezzoUnitario>-7\.47<\/PrezzoUnitario>\s*<PrezzoTotale>-7\.47<\/PrezzoTotale>\s*<AliquotaIVA>10\.00<\/AliquotaIVA>/,
+  );
+  assert.match(invoice.xml, /Sconto 10% \(IVA 4%\)/);
+  assert.doesNotMatch(invoice.xml, /ScontoMaggiorazione/);
+});
+
+test("document adjustments apply in cascade", () => {
+  const totals = computeTotals({
+    ...base,
+    adjustments: [{ percent: 10 }, { amountCents: 500 }],
+  });
+  // 9583 - 958 = 8625, then 500 more.
+  assert.equal(totals.taxableCents, 8625 - 500);
+  assert.equal(
+    totals.adjustmentLines.reduce((n, l) => n + l.amountCents, 0),
+    -958 - 500,
+  );
+  const percentAfter = computeTotals({
+    ...base,
+    adjustments: [{ amountCents: 583 }, { percent: 10 }],
+  });
+  assert.equal(percentAfter.taxableCents, 9000 - 900);
+});
+
+test("a document surcharge renders an AC line with a positive price", () => {
+  const invoice = buildInvoice({
+    ...base,
+    lines: [base.lines[0]!],
+    adjustments: [
+      { kind: "surcharge", percent: 2.5, description: "Spese di trasporto" },
+    ],
+  });
+  // 7470 * 2.5% = 186.75, rounded to 187.
+  assert.deepEqual(invoice.adjustmentLines, [
+    { adjustmentIndex: 0, vatRate: 10, amountCents: 187 },
+  ]);
+  assert.match(
+    invoice.xml,
+    /<TipoCessionePrestazione>AC<\/TipoCessionePrestazione>\s*<Descrizione>Spese di trasporto 2\.5%<\/Descrizione>\s*<PrezzoUnitario>1\.87<\/PrezzoUnitario>/,
+  );
+  assert.equal(invoice.taxableCents, 7657);
+});
+
+test("document adjustments report every invalid field", () => {
+  const withAdjustments = (adjustments: InvoiceInput["adjustments"]) =>
+    issues({ ...base, adjustments });
+  assert.deepEqual(
+    withAdjustments([
+      { percent: 0 },
+      { percent: 100.5 },
+      { percent: 12.345 },
+      { kind: "surcharge", percent: 1000 },
+      { percent: 10, amountCents: 100 },
+      {},
+      { amountCents: -5 },
+      { amountCents: 1.5 },
+      { description: "x".repeat(1001), amountCents: 100 },
+      { kind: "refund" as "discount", amountCents: 100 },
+    ]),
+    [
+      "adjustments[0].percent",
+      "adjustments[1].percent",
+      "adjustments[2].percent",
+      "adjustments[3].percent",
+      "adjustments[4]",
+      "adjustments[5]",
+      "adjustments[6].amountCents",
+      "adjustments[7].amountCents",
+      "adjustments[8].description",
+      "adjustments[9].kind",
+    ],
+  );
+  assert.deepEqual(
+    issues({
+      ...base,
+      lines: [{ ...base.lines[0]!, unitPriceCents: 0 }],
+      adjustments: [{ percent: 10 }],
+    }),
+    ["adjustments[0]"],
+  );
+});
+
+test("a zero-rate group takes its share of a document adjustment with its nature", () => {
+  const invoice = buildInvoice({
+    ...base,
+    lines: [
+      base.lines[0]!,
+      {
+        description: "Esportazione",
+        unitPriceCents: 10000,
+        vatRate: 0,
+        nature: "N3.1",
+      },
+    ],
+    adjustments: [{ amountCents: 1000 }],
+  });
+  assert.deepEqual(
+    invoice.adjustmentLines.map((l) => [l.vatRate, l.nature, l.amountCents]),
+    [
+      [10, undefined, -428],
+      [0, "N3.1", -572],
+    ],
+  );
+  assert.match(invoice.xml, /Sconto \(N3\.1\)<\/Descrizione>/);
+  assert.match(
+    invoice.xml,
+    /<PrezzoTotale>-5\.72<\/PrezzoTotale>\s*<AliquotaIVA>0\.00<\/AliquotaIVA>\s*<Natura>N3\.1<\/Natura>/,
+  );
+  assert.equal(
+    invoice.summary.find((s) => s.nature === "N3.1")?.taxableCents,
+    10000 - 572,
+  );
+});
+
 test("allocation splits cents proportionally and always adds up", () => {
   assert.deepEqual(allocateCents(490, [5000, 2500]), [327, 163]);
   assert.deepEqual(allocateCents(100, [1, 1, 1]), [34, 33, 33]);
@@ -394,6 +536,14 @@ test(
           linkedInvoices: [{ number: "1/MZ", date: "2026-10-20" }],
         }).xml,
         discounted: buildInvoice(discounted).xml,
+        documentDiscount: buildInvoice(withDocumentDiscount).xml,
+        documentAdjustments: buildInvoice({
+          ...withDocumentDiscount,
+          adjustments: [
+            { percent: 10 },
+            { kind: "surcharge", amountCents: 250, description: "Trasporto" },
+          ],
+        }).xml,
         foreign: buildInvoice(foreign).xml,
       };
       for (const [name, xml] of Object.entries(files)) {
