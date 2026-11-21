@@ -2,6 +2,7 @@
 
 Planned, roughly in order:
 
+- **Document-level discounts and surcharges**: a discount or surcharge on the whole invoice, spread over the VAT rates so the VAT summary stays consistent.
 - **Withholding tax and pension funds** (ritenuta d'acconto, cassa previdenziale), for professionals' invoices.
 - **Instalments**: more than one payment with its own due date and amount.
 - **Public-administration invoices** (FPA12), with CIG, CUP and the PA recipient codes.
