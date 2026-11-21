@@ -1,3 +1,5 @@
+import type { TransmissionFormat } from "./types.js";
+
 /** Italian Partita IVA: 11 digits with a Luhn-style check digit. */
 export function isValidVatNumber(value: string): boolean {
   if (!/^\d{11}$/.test(value) || /^0+$/.test(value)) return false;
@@ -77,9 +79,16 @@ export function isValidIban(value: string): boolean {
   return remainder === 1;
 }
 
-/** SDI recipient code (codice destinatario): 7 upper-case letters or digits for private recipients. */
-export function isValidRecipientCode(value: string): boolean {
-  return /^[A-Z0-9]{7}$/.test(value);
+/**
+ * SDI recipient code (codice destinatario): 7 upper-case letters or digits for private
+ * recipients (FPR12, the default), or the 6-character codice univoco ufficio listed in IPA for
+ * public administrations (FPA12).
+ */
+export function isValidRecipientCode(
+  value: string,
+  format: TransmissionFormat = "FPR12",
+): boolean {
+  return (format === "FPA12" ? /^[A-Z0-9]{6}$/ : /^[A-Z0-9]{7}$/).test(value);
 }
 
 /** Removes spaces and upper-cases an identifier typed by a person, e.g. an IBAN. */

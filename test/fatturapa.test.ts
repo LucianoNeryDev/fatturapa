@@ -11,6 +11,7 @@ import {
   FatturaPAError,
   isValidFiscalCode,
   isValidIban,
+  isValidRecipientCode,
   isValidVatNumber,
   type InvoiceInput,
 } from "../src/index.js";
@@ -104,6 +105,35 @@ const foreign: InvoiceInput = {
   ],
 };
 
+const publicAdministration: InvoiceInput = {
+  ...base,
+  format: "FPA12",
+  number: "3/PA",
+  buyer: {
+    fiscalCode: "80012000826",
+    name: "Comune di Esempio",
+    recipientCode: "UF7Q2K",
+    address: {
+      street: "Piazza Municipio 1",
+      postalCode: "25126",
+      city: "Brescia",
+      province: "BS",
+    },
+  },
+  vatExigibility: "S",
+  orderReference: { id: "ORD-2026-118", date: "2026-10-01" },
+  contractReference: [
+    {
+      id: "REP. 45/2026",
+      date: "2026-09-15",
+      lineNumbers: [1, 2],
+      itemCode: "Fornitura mensa scolastica",
+      cup: "J41B26000120004",
+      cig: "Z1A2B3C4D5",
+    },
+  ],
+};
+
 function issues(input: InvoiceInput): string[] {
   try {
     buildInvoice(input);
@@ -120,6 +150,13 @@ test("identifiers use the Partita IVA, codice fiscale and IBAN checksums", () =>
   assert.equal(isValidFiscalCode("RSSMRA85T10A562S"), true);
   assert.equal(isValidFiscalCode("RSSMRA85T10A562T"), false);
   assert.equal(isValidFiscalCode("20000000008"), true);
+  // Public bodies often have only an 11-digit numeric codice fiscale.
+  assert.equal(isValidFiscalCode("80012000826"), true);
+  assert.equal(isValidFiscalCode("80012000827"), false);
+  assert.equal(isValidRecipientCode("ABC1234"), true);
+  assert.equal(isValidRecipientCode("UF7Q2K"), false);
+  assert.equal(isValidRecipientCode("UF7Q2K", "FPA12"), true);
+  assert.equal(isValidRecipientCode("ABC1234", "FPA12"), false);
   assert.equal(isValidIban("IT60X0542811101000000123456"), true);
   assert.equal(isValidIban("IT60X0542811101000000123457"), false);
   assert.equal(isValidIban("IT60X054281110100000012345"), false);
@@ -504,6 +541,135 @@ test("a zero-rate group takes its share of a document adjustment with its nature
   );
 });
 
+test("public administration invoices render FPA12 with the office code and references", () => {
+  const invoice = buildInvoice(publicAdministration);
+  assert.match(invoice.xml, /<p:FatturaElettronica versione="FPA12" /);
+  assert.match(
+    invoice.xml,
+    /<FormatoTrasmissione>FPA12<\/FormatoTrasmissione>\s*<CodiceDestinatario>UF7Q2K<\/CodiceDestinatario>\s*<\/DatiTrasmissione>/,
+  );
+  assert.match(
+    invoice.xml,
+    /<CessionarioCommittente>\s*<DatiAnagrafici>\s*<CodiceFiscale>80012000826<\/CodiceFiscale>/,
+  );
+  assert.match(invoice.xml, /<EsigibilitaIVA>S<\/EsigibilitaIVA>/);
+  assert.match(
+    invoice.xml,
+    /<\/DatiGeneraliDocumento>\s*<DatiOrdineAcquisto>\s*<IdDocumento>ORD-2026-118<\/IdDocumento>\s*<Data>2026-10-01<\/Data>\s*<\/DatiOrdineAcquisto>\s*<DatiContratto>\s*<RiferimentoNumeroLinea>1<\/RiferimentoNumeroLinea>\s*<RiferimentoNumeroLinea>2<\/RiferimentoNumeroLinea>\s*<IdDocumento>REP. 45\/2026<\/IdDocumento>\s*<Data>2026-09-15<\/Data>\s*<CodiceCommessaConvenzione>Fornitura mensa scolastica<\/CodiceCommessaConvenzione>\s*<CodiceCUP>J41B26000120004<\/CodiceCUP>\s*<CodiceCIG>Z1A2B3C4D5<\/CodiceCIG>\s*<\/DatiContratto>\s*<\/DatiGenerali>/,
+  );
+
+  const all = buildInvoice({
+    ...publicAdministration,
+    type: "TD04",
+    linkedInvoices: [{ number: "1/PA", date: "2026-10-02" }],
+    orderReference: [{ id: "O1" }, { id: "O2" }],
+    contractReference: { id: "C1" },
+    agreementReference: { id: "A1", cig: "1234567890" },
+    receiptReference: { id: "R1" },
+  });
+  assert.deepEqual(
+    [
+      ...all.xml.matchAll(
+        /<(Dati(?:OrdineAcquisto|Contratto|Convenzione|Ricezione|FattureCollegate))>\s*<IdDocumento>([^<]+)/g,
+      ),
+    ].map((m) => `${m[1]} ${m[2]}`),
+    [
+      "DatiOrdineAcquisto O1",
+      "DatiOrdineAcquisto O2",
+      "DatiContratto C1",
+      "DatiConvenzione A1",
+      "DatiRicezione R1",
+      "DatiFattureCollegate 1/PA",
+    ],
+  );
+});
+
+test("FPA12 needs an Italian buyer with a 6-character office code and no PEC", () => {
+  const buyer = publicAdministration.buyer;
+  assert.deepEqual(
+    issues({
+      ...publicAdministration,
+      buyer: { ...buyer, recipientCode: "ABC1234" },
+    }),
+    ["buyer.recipientCode"],
+  );
+  assert.deepEqual(
+    issues({
+      ...publicAdministration,
+      buyer: { ...buyer, recipientCode: undefined },
+    }),
+    ["buyer.recipientCode"],
+  );
+  assert.deepEqual(
+    issues({
+      ...publicAdministration,
+      buyer: { ...buyer, pec: "ufficio@pec.it" },
+    }),
+    ["buyer.pec"],
+  );
+  assert.deepEqual(
+    issues({
+      ...publicAdministration,
+      buyer: {
+        vatNumber: "DE123456789",
+        name: "Stadt Berlin",
+        recipientCode: "UF7Q2K",
+        address: { street: "Rathausstraße 15", city: "Berlin", country: "DE" },
+      },
+    }),
+    ["buyer.address.country"],
+  );
+  // A 6-character office code on a private-sector invoice.
+  assert.deepEqual(
+    issues({ ...base, buyer: { ...base.buyer, recipientCode: "UF7Q2K" } }),
+    ["buyer.recipientCode"],
+  );
+  assert.deepEqual(issues({ ...base, format: "FPA13" as "FPA12" }), ["format"]);
+});
+
+test("document references validate CIG, CUP, dates and line numbers with input paths", () => {
+  assert.deepEqual(
+    issues({
+      ...base,
+      orderReference: { id: "", date: "2026-02-30" },
+      contractReference: [
+        { id: "C1", cig: "Z1A2B3C4D5" },
+        {
+          id: "C2",
+          lineNumbers: [0, 2, 3, 1.5],
+          cig: "Z1A2B3C4D5E6F7G8",
+          cup: "J41B26000120004X",
+          itemCode: "x".repeat(101),
+        },
+      ],
+      receiptReference: { id: "R1", cig: "CIG “È”" },
+    }),
+    [
+      "orderReference.id",
+      "orderReference.date",
+      "contractReference[1].lineNumbers[0]",
+      "contractReference[1].lineNumbers[2]",
+      "contractReference[1].lineNumbers[3]",
+      "contractReference[1].itemCode",
+      "contractReference[1].cup",
+      "contractReference[1].cig",
+      "receiptReference.cig",
+    ],
+  );
+});
+
+test("a single purchase-order reference still renders as before", () => {
+  const invoice = buildInvoice({
+    ...base,
+    orderReference: { id: "PO-77", date: "2026-10-01" },
+  });
+  assert.match(invoice.xml, /<p:FatturaElettronica versione="FPR12" /);
+  assert.match(
+    invoice.xml,
+    /<\/DatiGeneraliDocumento>\s*<DatiOrdineAcquisto>\s*<IdDocumento>PO-77<\/IdDocumento>\s*<Data>2026-10-01<\/Data>\s*<\/DatiOrdineAcquisto>\s*<\/DatiGenerali>/,
+  );
+});
+
 test("allocation splits cents proportionally and always adds up", () => {
   assert.deepEqual(allocateCents(490, [5000, 2500]), [327, 163]);
   assert.deepEqual(allocateCents(100, [1, 1, 1]), [34, 33, 33]);
@@ -545,6 +711,7 @@ test(
           ],
         }).xml,
         foreign: buildInvoice(foreign).xml,
+        publicAdministration: buildInvoice(publicAdministration).xml,
       };
       for (const [name, xml] of Object.entries(files)) {
         const file = join(dir, `${name}.xml`);

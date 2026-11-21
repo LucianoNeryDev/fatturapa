@@ -9,6 +9,12 @@ export type DocumentType =
   /** Deferred invoice (art. 21, comma 4, lett. a, DPR 633/72). */
   | "TD24";
 
+/**
+ * FatturaPA transmission format: FPR12 for businesses and consumers, FPA12 for public
+ * administrations.
+ */
+export type TransmissionFormat = "FPR12" | "FPA12";
+
 export const taxRegimes = [
   "RF01",
   "RF02",
@@ -126,11 +132,12 @@ export interface Buyer {
   name: string;
   address: Address;
   /**
-   * SDI recipient code (codice destinatario), 7 characters. Defaults to "0000000" for Italian
-   * buyers and "XXXXXXX" for foreign ones, the only code allowed for them.
+   * SDI recipient code (codice destinatario). FPR12: 7 characters, defaulting to "0000000" for
+   * Italian buyers and "XXXXXXX" for foreign ones, the only code allowed for them. FPA12:
+   * required, the 6-character codice univoco ufficio listed in IPA.
    */
   recipientCode?: string;
-  /** Certified email (PEC), used only with recipient code "0000000". */
+  /** Certified email (PEC), used only with FPR12 and recipient code "0000000". */
   pec?: string;
 }
 
@@ -196,6 +203,25 @@ export interface InvoiceLine {
   legalReference?: string;
 }
 
+/**
+ * A document the invoice refers to: a purchase order, contract, agreement or receipt
+ * (DatiDocumentiCorrelati). Public administrations use it for the CIG and CUP codes.
+ */
+export interface DocumentReference {
+  /** Document number, up to 20 ASCII characters (IdDocumento). */
+  id: string;
+  /** Document date, YYYY-MM-DD. */
+  date?: string;
+  /** Invoice lines the reference applies to, 1-based; omit when it covers the whole invoice. */
+  lineNumbers?: number[];
+  /** Order, contract or agreement code, up to 100 characters (CodiceCommessaConvenzione). */
+  itemCode?: string;
+  /** Codice Unico di Progetto, up to 15 ASCII characters (CodiceCUP). */
+  cup?: string;
+  /** Codice Identificativo Gara, up to 15 ASCII characters (CodiceCIG). */
+  cig?: string;
+}
+
 export interface Payment {
   method: PaymentMethod;
   /** YYYY-MM-DD. */
@@ -206,6 +232,8 @@ export interface Payment {
 }
 
 export interface InvoiceInput {
+  /** Transmission format: FPR12 (default) for private recipients, FPA12 for public administrations. */
+  format?: TransmissionFormat;
   type?: DocumentType;
   /** Invoice number, up to 20 ASCII characters with at least one digit, e.g. "12/MZ". */
   number: string;
@@ -222,8 +250,14 @@ export interface InvoiceInput {
   vatExigibility?: "I" | "D" | "S";
   /** Free text (Causale), split into 200-character elements. */
   description?: string;
-  /** Buyer's purchase order this invoice refers to (DatiOrdineAcquisto). */
-  orderReference?: { id: string; date?: string };
+  /** Buyer's purchase orders this invoice refers to (DatiOrdineAcquisto). */
+  orderReference?: DocumentReference | DocumentReference[];
+  /** Contracts this invoice refers to (DatiContratto). */
+  contractReference?: DocumentReference | DocumentReference[];
+  /** Framework agreements (convenzioni) this invoice refers to (DatiConvenzione). */
+  agreementReference?: DocumentReference | DocumentReference[];
+  /** Receipts of the goods or services this invoice refers to (DatiRicezione). */
+  receiptReference?: DocumentReference | DocumentReference[];
   /** Invoices corrected by a credit or debit note (DatiFattureCollegate). */
   linkedInvoices?: { number: string; date: string }[];
   payment?: Payment;

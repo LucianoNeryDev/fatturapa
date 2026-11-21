@@ -3,6 +3,10 @@
 ## Unreleased
 
 - Document-level discounts and surcharges (`adjustments` on the invoice), applied in cascade and spread over the VAT rates as `SC`/`AC` lines. `computeTotals` and the result gain `adjustmentLines`.
+- Public administration invoices: `format: "FPA12"` sets `versione` and `FormatoTrasmissione`. It requires the 6-character codice univoco ufficio as recipient code and rejects PEC and foreign buyers. FPR12 invoices reject 6-character codes.
+- `isValidRecipientCode(code, format?)` takes an optional format; `"FPA12"` checks a 6-character office code.
+- Document references: `orderReference` takes one reference or an array, and the new `contractReference`, `agreementReference` and `receiptReference` render `DatiContratto`, `DatiConvenzione` and `DatiRicezione`. Each reference (`DocumentReference`) carries line numbers, an order or agreement code, CUP and CIG, checked against the schema lengths.
+- Docs: FPA12 files must be signed (CAdES or XAdES) by the SDI channel before transmission; the library does not sign.
 
 ## 0.1.1 - 2026-10-21
 
