@@ -134,6 +134,45 @@ const publicAdministration: InvoiceInput = {
   ],
 };
 
+// An engineer's fee: Inarcassa's 4% integrative contribution is not subject to withholding.
+const professional: InvoiceInput = {
+  ...base,
+  number: "4/ING",
+  lines: [
+    {
+      description: "Progettazione impianto elettrico",
+      unitPriceCents: 100000,
+      vatRate: 22,
+      withholding: true,
+    },
+  ],
+  pensionFunds: [{ type: "TC04", rate: 4, vatRate: 22 }],
+  withholdings: [{ type: "RT01", rate: 20, reason: "A" }],
+};
+
+// A gestione separata professional: the 4% INPS rivalsa is subject to withholding.
+const professionalInps: InvoiceInput = {
+  ...professional,
+  pensionFunds: [
+    {
+      type: "TC22",
+      rate: 4,
+      vatRate: 22,
+      withholding: true,
+      reference: "PRAT-2026/18",
+    },
+  ],
+  stampDuty: true,
+};
+
+// A professional invoicing a public administration with split payment.
+const professionalToPublicAdministration: InvoiceInput = {
+  ...professional,
+  format: "FPA12",
+  buyer: publicAdministration.buyer,
+  vatExigibility: "S",
+};
+
 function issues(input: InvoiceInput): string[] {
   try {
     buildInvoice(input);
@@ -670,6 +709,317 @@ test("a single purchase-order reference still renders as before", () => {
   );
 });
 
+test("a professional's invoice adds the pension fund and withholds on the fee", () => {
+  const invoice = buildInvoice(professional);
+  assert.deepEqual(invoice.pensionFunds, [
+    {
+      type: "TC04",
+      taxableCents: 100000,
+      contributionCents: 4000,
+      vatRate: 22,
+    },
+  ]);
+  assert.deepEqual(
+    invoice.summary.map((s) => [s.vatRate, s.taxableCents, s.vatCents]),
+    [[22, 104000, 22880]],
+  );
+  assert.equal(invoice.taxableCents, 104000);
+  assert.equal(invoice.vatCents, 22880);
+  assert.equal(invoice.totalCents, 126880);
+  assert.deepEqual(invoice.withholdings, [
+    {
+      type: "RT01",
+      rate: 20,
+      reason: "A",
+      taxableCents: 100000,
+      amountCents: 20000,
+    },
+  ]);
+  assert.equal(invoice.withholdingCents, 20000);
+  assert.equal(invoice.payableCents, 126880 - 20000);
+  assert.match(
+    invoice.xml,
+    /<AliquotaIVA>22\.00<\/AliquotaIVA>\s*<Ritenuta>SI<\/Ritenuta>\s*<\/DettaglioLinee>/,
+  );
+  assert.match(
+    invoice.xml,
+    /<ImponibileImporto>1040\.00<\/ImponibileImporto>\s*<Imposta>228\.80<\/Imposta>/,
+  );
+  assert.match(invoice.xml, /<ImportoPagamento>1068\.80<\/ImportoPagamento>/);
+
+  // The INPS rivalsa is subject to withholding: the base is 1040.00.
+  const inps = buildInvoice(professionalInps);
+  assert.equal(inps.totalCents, 126880);
+  assert.equal(inps.withholdings[0]!.taxableCents, 104000);
+  assert.equal(inps.withholdingCents, 20800);
+  assert.equal(inps.payableCents, 126880 - 20800);
+  assert.match(inps.xml, /<ImportoPagamento>1060\.80<\/ImportoPagamento>/);
+  assert.match(
+    inps.xml,
+    /<DatiGeneraliDocumento>\s*<TipoDocumento>TD01<\/TipoDocumento>\s*<Divisa>EUR<\/Divisa>\s*<Data>2026-10-20<\/Data>\s*<Numero>4\/ING<\/Numero>\s*<DatiRitenuta>\s*<TipoRitenuta>RT01<\/TipoRitenuta>\s*<ImportoRitenuta>208\.00<\/ImportoRitenuta>\s*<AliquotaRitenuta>20\.00<\/AliquotaRitenuta>\s*<CausalePagamento>A<\/CausalePagamento>\s*<\/DatiRitenuta>\s*<DatiBollo>\s*<BolloVirtuale>SI<\/BolloVirtuale>\s*<ImportoBollo>2\.00<\/ImportoBollo>\s*<\/DatiBollo>\s*<DatiCassaPrevidenziale>\s*<TipoCassa>TC22<\/TipoCassa>\s*<AlCassa>4\.00<\/AlCassa>\s*<ImportoContributoCassa>40\.00<\/ImportoContributoCassa>\s*<ImponibileCassa>1000\.00<\/ImponibileCassa>\s*<AliquotaIVA>22\.00<\/AliquotaIVA>\s*<Ritenuta>SI<\/Ritenuta>\s*<RiferimentoAmministrazione>PRAT-2026\/18<\/RiferimentoAmministrazione>\s*<\/DatiCassaPrevidenziale>\s*<ImportoTotaleDocumento>1268\.80<\/ImportoTotaleDocumento>\s*<\/DatiGeneraliDocumento>/,
+  );
+
+  // ImponibileCassa can be overridden.
+  const overridden = computeTotals({
+    ...professional,
+    pensionFunds: [{ type: "TC04", rate: 4, vatRate: 22, taxableCents: 50000 }],
+  });
+  assert.equal(overridden.pensionFunds[0]!.contributionCents, 2000);
+  assert.equal(overridden.taxableCents, 102000);
+});
+
+test("a flat-rate seller's pension fund takes rate 0 with nature N2.2", () => {
+  const flatRate: InvoiceInput = {
+    ...base,
+    seller: { ...base.seller, taxRegime: "RF19" },
+    lines: [
+      {
+        description: "Consulenza",
+        unitPriceCents: 100000,
+        vatRate: 0,
+        nature: "N2.2",
+      },
+    ],
+    pensionFunds: [{ type: "TC22", rate: 4, vatRate: 0, nature: "N2.2" }],
+  };
+  const invoice = buildInvoice(flatRate);
+  assert.equal(invoice.taxableCents, 104000);
+  assert.equal(invoice.payableCents, 104000);
+  assert.equal(invoice.stampDutyCents, 200);
+  assert.match(
+    invoice.xml,
+    /<AliquotaIVA>0\.00<\/AliquotaIVA>\s*<Natura>N2\.2<\/Natura>\s*<\/DatiCassaPrevidenziale>/,
+  );
+  assert.deepEqual(
+    issues({
+      ...flatRate,
+      pensionFunds: [{ type: "TC22", rate: 4, vatRate: 22 }],
+    }),
+    ["pensionFunds[0].vatRate"],
+  );
+});
+
+test("a sales agent is withheld on half of the commission", () => {
+  const invoice = buildInvoice({
+    ...base,
+    lines: [
+      {
+        description: "Provvigioni ottobre 2026",
+        unitPriceCents: 100000,
+        vatRate: 22,
+        withholding: true,
+      },
+    ],
+    withholdings: [{ type: "RT01", rate: 23, reason: "R", basePercent: 50 }],
+  });
+  assert.deepEqual(invoice.withholdings, [
+    {
+      type: "RT01",
+      rate: 23,
+      reason: "R",
+      taxableCents: 50000,
+      amountCents: 11500,
+    },
+  ]);
+  assert.equal(invoice.totalCents, 122000);
+  assert.equal(invoice.payableCents, 122000 - 11500);
+  assert.match(
+    invoice.xml,
+    /<ImportoRitenuta>115\.00<\/ImportoRitenuta>\s*<AliquotaRitenuta>23\.00<\/AliquotaRitenuta>\s*<CausalePagamento>R<\/CausalePagamento>/,
+  );
+});
+
+test("withholdings of different types add up; a type cannot repeat", () => {
+  const invoice = buildInvoice({
+    ...professional,
+    pensionFunds: undefined,
+    withholdings: [
+      { type: "RT01", rate: 20, reason: "A" },
+      { type: "RT03", rate: 9.09, reason: "A" },
+    ],
+  });
+  assert.deepEqual(
+    invoice.withholdings.map((w) => [w.type, w.amountCents]),
+    [
+      ["RT01", 20000],
+      ["RT03", 9090],
+    ],
+  );
+  assert.equal(invoice.withholdingCents, 29090);
+  assert.equal(invoice.payableCents, 122000 - 29090);
+  assert.deepEqual(
+    [...invoice.xml.matchAll(/<TipoRitenuta>(RT\d\d)<\/TipoRitenuta>/g)].map(
+      (m) => m[1],
+    ),
+    ["RT01", "RT03"],
+  );
+  assert.deepEqual(
+    issues({
+      ...professional,
+      withholdings: [
+        { type: "RT01", rate: 20, reason: "A" },
+        { type: "RT03", rate: 4, reason: "A" },
+        { type: "RT01", rate: 4, reason: "A" },
+      ],
+    }),
+    ["withholdings[2].type"],
+  );
+});
+
+test("split payment leaves the VAT out of the amount payable", () => {
+  const invoice = buildInvoice({ ...base, vatExigibility: "S" });
+  assert.equal(invoice.totalCents, 10415);
+  assert.equal(invoice.payableCents, 9583);
+  assert.match(
+    invoice.xml,
+    /<ImportoTotaleDocumento>104\.15<\/ImportoTotaleDocumento>/,
+  );
+  assert.match(invoice.xml, /<ImportoPagamento>95\.83<\/ImportoPagamento>/);
+
+  // A professional invoicing a public administration: the taxable amount less the withholding.
+  const pa = buildInvoice(professionalToPublicAdministration);
+  assert.equal(pa.payableCents, 104000 - 20000);
+  assert.match(pa.xml, /<ImportoPagamento>840\.00<\/ImportoPagamento>/);
+});
+
+test("withholdings and pension funds report SDI inconsistencies and invalid fields", () => {
+  assert.deepEqual(
+    issues({
+      ...base,
+      withholdings: [{ type: "RT01", rate: 20, reason: "A" }],
+    }),
+    ["withholdings"],
+  );
+  assert.deepEqual(
+    issues({
+      ...base,
+      lines: [{ ...base.lines[0]!, withholding: true }, base.lines[1]!],
+    }),
+    ["lines[0].withholding"],
+  );
+  assert.deepEqual(
+    issues({
+      ...base,
+      pensionFunds: [{ type: "TC22", rate: 4, vatRate: 10, withholding: true }],
+    }),
+    ["pensionFunds[0].withholding"],
+  );
+  // A pension fund subject to withholding is enough on its own.
+  assert.deepEqual(
+    issues({
+      ...base,
+      pensionFunds: [{ type: "TC22", rate: 4, vatRate: 10, withholding: true }],
+      withholdings: [{ type: "RT01", rate: 20, reason: "A" }],
+    }),
+    [],
+  );
+  // Withholdings larger than the total.
+  const excessive: InvoiceInput = {
+    ...professional,
+    pensionFunds: undefined,
+    withholdings: [
+      { type: "RT01", rate: 100, reason: "A" },
+      { type: "RT03", rate: 50, reason: "A" },
+    ],
+  };
+  assert.deepEqual(issues(excessive), ["withholdings"]);
+  assert.deepEqual(
+    issues({
+      ...excessive,
+      type: "TD05",
+      linkedInvoices: [{ number: "1/MZ", date: "2026-10-20" }],
+    }),
+    [],
+  );
+  assert.deepEqual(
+    issues({
+      ...professional,
+      withholdings: [
+        {
+          type: "RT07" as "RT01",
+          rate: 0,
+          reason: "F" as "A",
+          basePercent: 150,
+        },
+        { type: "RT02", rate: 20.005, reason: "A", basePercent: 0 },
+      ],
+      pensionFunds: [
+        { type: "TC23" as "TC01", rate: 101, vatRate: 0 },
+        {
+          type: "TC01",
+          rate: 4,
+          vatRate: 22,
+          nature: "N4",
+          taxableCents: -1,
+          reference: "x".repeat(21),
+        },
+        {
+          type: "TC01",
+          rate: 4,
+          vatRate: 22,
+          taxableCents: 1.5,
+          reference: "Pratica “È”",
+        },
+      ],
+    }).sort(),
+    [
+      "pensionFunds[0].nature",
+      "pensionFunds[0].rate",
+      "pensionFunds[0].type",
+      "pensionFunds[1].nature",
+      "pensionFunds[1].reference",
+      "pensionFunds[1].taxableCents",
+      "pensionFunds[2].reference",
+      "pensionFunds[2].taxableCents",
+      "withholdings[0].basePercent",
+      "withholdings[0].rate",
+      "withholdings[0].reason",
+      "withholdings[0].type",
+      "withholdings[1].basePercent",
+      "withholdings[1].rate",
+    ],
+  );
+});
+
+test("a document adjustment line is subject to withholding only when its whole VAT group is", () => {
+  const invoice = buildInvoice({
+    ...base,
+    lines: [
+      {
+        description: "Onorario",
+        unitPriceCents: 100000,
+        vatRate: 22,
+        withholding: true,
+      },
+      { description: "Materiale", unitPriceCents: 10000, vatRate: 22 },
+      {
+        description: "Corso",
+        unitPriceCents: 50000,
+        vatRate: 10,
+        withholding: true,
+      },
+    ],
+    adjustments: [{ percent: 10 }],
+    withholdings: [{ type: "RT01", rate: 20, reason: "A" }],
+  });
+  assert.deepEqual(invoice.adjustmentLines, [
+    { adjustmentIndex: 0, vatRate: 22, amountCents: -11000 },
+    { adjustmentIndex: 0, vatRate: 10, amountCents: -5000, withholding: true },
+  ]);
+  // 1000.00 + 500.00 - 50.00: the mixed 22% group's discount is not subject to withholding.
+  assert.equal(invoice.withholdings[0]!.taxableCents, 145000);
+  assert.equal(invoice.withholdingCents, 29000);
+  assert.match(
+    invoice.xml,
+    /<PrezzoTotale>-110\.00<\/PrezzoTotale>\s*<AliquotaIVA>22\.00<\/AliquotaIVA>\s*<\/DettaglioLinee>/,
+  );
+  assert.match(
+    invoice.xml,
+    /<PrezzoTotale>-50\.00<\/PrezzoTotale>\s*<AliquotaIVA>10\.00<\/AliquotaIVA>\s*<Ritenuta>SI<\/Ritenuta>\s*<\/DettaglioLinee>/,
+  );
+  assert.equal(invoice.xml.match(/<Ritenuta>SI<\/Ritenuta>/g)?.length, 3);
+});
+
 test("allocation splits cents proportionally and always adds up", () => {
   assert.deepEqual(allocateCents(490, [5000, 2500]), [327, 163]);
   assert.deepEqual(allocateCents(100, [1, 1, 1]), [34, 33, 33]);
@@ -712,6 +1062,24 @@ test(
         }).xml,
         foreign: buildInvoice(foreign).xml,
         publicAdministration: buildInvoice(publicAdministration).xml,
+        professional: buildInvoice(professional).xml,
+        professionalInps: buildInvoice(professionalInps).xml,
+        splitPaymentWithholding: buildInvoice(
+          professionalToPublicAdministration,
+        ).xml,
+        flatRatePensionFund: buildInvoice({
+          ...base,
+          seller: { ...base.seller, taxRegime: "RF19" },
+          lines: [
+            {
+              description: "Consulenza",
+              unitPriceCents: 100000,
+              vatRate: 0,
+              nature: "N2.2",
+            },
+          ],
+          pensionFunds: [{ type: "TC22", rate: 4, vatRate: 0, nature: "N2.2" }],
+        }).xml,
       };
       for (const [name, xml] of Object.entries(files)) {
         const file = join(dir, `${name}.xml`);

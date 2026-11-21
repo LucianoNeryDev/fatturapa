@@ -20,27 +20,29 @@ All amounts are integer euro cents (`2490` is €24.90). Quantities and percenta
 
 ### `InvoiceInput`
 
-| Field                | Required   | Description                                                                                                         |
-| -------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------- |
-| `format`             |            | `FPR12` (default) for businesses and consumers, `FPA12` for [public administrations](#public-administration-fpa12). |
-| `type`               |            | `TD01` invoice (default), `TD04` credit note, `TD05` debit note, `TD24` deferred invoice.                           |
-| `number`             | yes        | Invoice number, up to 20 ASCII characters with at least one digit, e.g. `12/A`.                                     |
-| `date`               | yes        | Issue date, `YYYY-MM-DD`.                                                                                           |
-| `seller`             | yes        | The supplier (`CedentePrestatore`), see [Seller](#seller).                                                          |
-| `buyer`              | yes        | The customer (`CessionarioCommittente`), see [Buyer](#buyer).                                                       |
-| `issuer`             |            | A third party issuing on the seller's behalf, see [Third-party issuer](#third-party-issuer).                        |
-| `transmitter`        | yes        | Who sends the file to SDI, see [Transmitter and file name](#transmitter-and-file-name).                             |
-| `lines`              | yes        | 1 to 9999 lines, see [Line](#line).                                                                                 |
-| `adjustments`        |            | Discounts and surcharges on the whole invoice, see [Discounts and surcharges](#discounts-and-surcharges).           |
-| `vatExigibility`     |            | `I` immediate (default), `D` deferred, `S` split payment.                                                           |
-| `description`        |            | Free text (`Causale`), split into 200-character elements at word boundaries.                                        |
-| `orderReference`     |            | The buyer's purchase orders (`DatiOrdineAcquisto`), see [Document references](#document-references).                |
-| `contractReference`  |            | Contracts (`DatiContratto`), see [Document references](#document-references).                                       |
-| `agreementReference` |            | Framework agreements, convenzioni (`DatiConvenzione`), see [Document references](#document-references).             |
-| `receiptReference`   |            | Receipts of the goods or services (`DatiRicezione`), see [Document references](#document-references).               |
-| `linkedInvoices`     | TD04, TD05 | `[{ number, date }]`: the invoices a credit or debit note corrects (`DatiFattureCollegate`).                        |
-| `payment`            |            | See [Payment](#payment).                                                                                            |
-| `stampDuty`          |            | `"auto"` (default), `true` or `false`. See [Stamp duty](#stamp-duty).                                               |
+| Field                | Required   | Description                                                                                                                          |
+| -------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `format`             |            | `FPR12` (default) for businesses and consumers, `FPA12` for [public administrations](#public-administration-fpa12).                  |
+| `type`               |            | `TD01` invoice (default), `TD04` credit note, `TD05` debit note, `TD24` deferred invoice.                                            |
+| `number`             | yes        | Invoice number, up to 20 ASCII characters with at least one digit, e.g. `12/A`.                                                      |
+| `date`               | yes        | Issue date, `YYYY-MM-DD`.                                                                                                            |
+| `seller`             | yes        | The supplier (`CedentePrestatore`), see [Seller](#seller).                                                                           |
+| `buyer`              | yes        | The customer (`CessionarioCommittente`), see [Buyer](#buyer).                                                                        |
+| `issuer`             |            | A third party issuing on the seller's behalf, see [Third-party issuer](#third-party-issuer).                                         |
+| `transmitter`        | yes        | Who sends the file to SDI, see [Transmitter and file name](#transmitter-and-file-name).                                              |
+| `lines`              | yes        | 1 to 9999 lines, see [Line](#line).                                                                                                  |
+| `adjustments`        |            | Discounts and surcharges on the whole invoice, see [Discounts and surcharges](#discounts-and-surcharges).                            |
+| `pensionFunds`       |            | Pension fund contributions (`DatiCassaPrevidenziale`), see [Withholding tax and pension funds](#withholding-tax-and-pension-funds).  |
+| `withholdings`       |            | Withholding taxes and contributions (`DatiRitenuta`), see [Withholding tax and pension funds](#withholding-tax-and-pension-funds).   |
+| `vatExigibility`     |            | `I` immediate (default), `D` deferred, `S` split payment: the buyer pays the VAT to the Treasury, so the amount payable excludes it. |
+| `description`        |            | Free text (`Causale`), split into 200-character elements at word boundaries.                                                         |
+| `orderReference`     |            | The buyer's purchase orders (`DatiOrdineAcquisto`), see [Document references](#document-references).                                 |
+| `contractReference`  |            | Contracts (`DatiContratto`), see [Document references](#document-references).                                                        |
+| `agreementReference` |            | Framework agreements, convenzioni (`DatiConvenzione`), see [Document references](#document-references).                              |
+| `receiptReference`   |            | Receipts of the goods or services (`DatiRicezione`), see [Document references](#document-references).                                |
+| `linkedInvoices`     | TD04, TD05 | `[{ number, date }]`: the invoices a credit or debit note corrects (`DatiFattureCollegate`).                                         |
+| `payment`            |            | See [Payment](#payment).                                                                                                             |
+| `stampDuty`          |            | `"auto"` (default), `true` or `false`. See [Stamp duty](#stamp-duty).                                                                |
 
 ### Seller
 
@@ -89,6 +91,7 @@ An Italian buyer needs a `vatNumber`, a `fiscalCode` or both. Private consumers 
 | `vatRate`        | yes      | Percentage with up to 2 decimals, e.g. `22`, `10`, `4`, `0`.                                                                                                                                           |
 | `nature`         | rate 0   | Why the line carries no VAT (`Natura`), e.g. `N2.2`, `N3.1`, `N4`. Required when the rate is 0 and rejected otherwise. The generic `N2`, `N3` and `N6` codes are rejected, as SDI has done since 2021. |
 | `legalReference` |          | Law reference for zero-rated lines, up to 100 characters, printed in the VAT summary (`RiferimentoNormativo`).                                                                                         |
+| `withholding`    |          | `true` when the line is subject to the invoice's `withholdings` (`Ritenuta` `SI`). See [Withholding tax and pension funds](#withholding-tax-and-pension-funds).                                        |
 
 ### Document references
 
@@ -115,7 +118,7 @@ Issue paths name the reference: `orderReference.date` for a single object, `cont
 | `bank`        |          | Bank name, up to 80 characters.                                                                                  |
 | `beneficiary` |          | Up to 200 characters, when the payee is not the seller.                                                          |
 
-The invoice asks for full payment (`TP02`) of the document total.
+The invoice asks for full payment (`TP02`) of the amount payable, `payableCents`: the document total less the [withholdings](#withholding-tax-and-pension-funds), and less the VAT with split payment (`vatExigibility: "S"`).
 
 ### Third-party issuer
 
@@ -142,10 +145,12 @@ The result carries:
 - `lines[i].lineTotalCents`
 - `adjustmentLines`: the lines generated from document adjustments, see [below](#discounts-and-surcharges-on-the-whole-invoice)
 - `summary`: one entry per rate and nature, highest rate first, each with `taxableCents`, `vatCents` and `legalReference`
-- `taxableCents`, `vatCents`, and `totalCents` (`ImportoTotaleDocumento`)
+- `pensionFunds` and `withholdings`: the computed contributions and withholdings, see [below](#withholding-tax-and-pension-funds)
+- `taxableCents`, `vatCents`, and `totalCents` (`ImportoTotaleDocumento`, gross of withholdings)
+- `withholdingCents`, the sum of the withholdings, and `payableCents` (`ImportoPagamento`): `totalCents` less `withholdingCents`, and less `vatCents` with split payment
 - `stampDutyCents`
 
-`computeTotals({ lines, stampDuty })` returns the same totals without validating or rendering. Use it to show totals before issuing. An invoice (`TD01`) cannot have a negative total; issue a credit note instead.
+`computeTotals({ lines, stampDuty, adjustments, pensionFunds, withholdings, vatExigibility })` returns the same totals without validating or rendering. Use it to show totals before issuing. An invoice (`TD01`) cannot have a negative total; issue a credit note instead.
 
 ### Discounts and surcharges
 
@@ -195,6 +200,68 @@ Each adjustment has `kind` (`"discount"`, the default, or `"surcharge"`), exactl
 - **Totals.** The VAT summary, the total and the automatic stamp duty check include the shares. A discount larger than the invoice is only accepted on non-`TD01` documents.
 
 Why lines and not a document-level `ScontoMaggiorazione`: an unconditional discount reduces the VAT base (art. 15 DPR 633/72), so each rate needs its own reduction. A document-level `ScontoMaggiorazione` is informative in FatturaPA and would be counted twice. The library therefore spreads the discount per rate as `SC`/`AC` lines, which SDI sums into the summary as is.
+
+### Withholding tax and pension funds
+
+Professionals and sales agents often invoice with a pension fund contribution (cassa previdenziale) charged to the buyer, and a withholding tax (ritenuta d'acconto) the buyer keeps and pays to the State on their behalf.
+
+```ts
+{
+  // ...
+  lines: [
+    {
+      description: "Progettazione impianto elettrico",
+      unitPriceCents: 100000,
+      vatRate: 22,
+      withholding: true,
+    },
+  ],
+  pensionFunds: [{ type: "TC04", rate: 4, vatRate: 22 }],
+  withholdings: [{ type: "RT01", rate: 20, reason: "A" }],
+}
+// contribution 40.00, taxable 1040.00, VAT 228.80, total 1268.80
+// withholding 200.00 (20% of 1000.00), payable 1068.80
+```
+
+`pensionFunds` (`DatiCassaPrevidenziale`):
+
+| Field          | Required | Description                                                                                                                                                                      |
+| -------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`         | yes      | `TipoCassa`, `TC01` to `TC22`, e.g. `TC01` lawyers, `TC04` engineers and architects, `TC22` INPS.                                                                                |
+| `rate`         | yes      | Contribution rate (`AlCassa`), above 0 and at most 100, with at most 2 decimals.                                                                                                 |
+| `vatRate`      | yes      | VAT rate on the contribution, usually the fee's. The same rules as a line: rate 0 needs `nature`, flat-rate sellers use 0 with `N2.2`.                                           |
+| `nature`       | rate 0   | `Natura` of a zero-rated contribution.                                                                                                                                           |
+| `withholding`  |          | `true` when the contribution is subject to the withholdings (`Ritenuta` `SI`), as the INPS rivalsa is. Inarcassa's and most professional funds' integrative contribution is not. |
+| `taxableCents` |          | Amount the contribution is computed on (`ImponibileCassa`), a non-negative integer. Defaults to the taxable amount of the lines and document adjustments.                        |
+| `reference`    |          | Up to 20 ASCII characters (`RiferimentoAmministrazione`).                                                                                                                        |
+
+`withholdings` (`DatiRitenuta`):
+
+| Field         | Required | Description                                                                                                         |
+| ------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| `type`        | yes      | `TipoRitenuta`: `RT01` individuals, `RT02` companies, `RT03` INPS, `RT04` ENASARCO, `RT05` ENPAM, `RT06` other.     |
+| `rate`        | yes      | Withholding rate (`AliquotaRitenuta`), above 0 and at most 100, with at most 2 decimals, e.g. 20.                   |
+| `reason`      | yes      | `CausalePagamento`, the 770 payment reason, e.g. `A` professional work, `Q` and `R` sales agents.                   |
+| `basePercent` |          | Share of the subject amount the rate applies to, above 0 and at most 100; default 100. Sales agents use 50 (or 20). |
+
+The amounts are computed in this order, each rounded half away from zero to the cent:
+
+1. **Lines and document adjustments**, as above.
+2. **Pension funds.** Each contribution is `rate` percent of `taxableCents`, or of the taxable amount of all lines (including document adjustment lines) before any pension fund. It is added to the VAT group of its `vatRate` and `nature`, created if needed, so the VAT summary, the taxable amount, the VAT and the total include it. VAT is still rounded once per group.
+3. **Withholdings.** The subject amount is the sum of the lines with `withholding: true` and the contributions with `withholding: true`. Each withholding is `rate` percent of `basePercent` percent of it. A sales agent at 23% on 50% of a €1000.00 commission is withheld €115.00.
+
+A document adjustment line is subject to withholding (`Ritenuta` `SI`, counted in the subject amount) only when every line of its VAT group has `withholding: true`.
+
+`ImportoTotaleDocumento` stays the taxable amount plus VAT, gross of withholdings. `payableCents` is the total less the withholdings, and with split payment (`vatExigibility: "S"`) less the VAT as well, since the buyer pays it to the Treasury. A professional invoicing a public administration with split payment is paid the taxable amount less the withholding. `ImportoPagamento` is `payableCents`.
+
+The XML follows the schema order: `DatiRitenuta` after `Numero`, then `DatiBollo`, then `DatiCassaPrevidenziale`, then `ImportoTotaleDocumento`. On each line, `Ritenuta` comes after `AliquotaIVA`.
+
+SDI's consistency checks are run before rendering, with these issue paths:
+
+- `withholdings`: withholdings with no line and no pension fund marked `withholding: true`
+- `lines[i].withholding`, `pensionFunds[i].withholding`: marked `withholding: true` on an invoice without withholdings
+- `withholdings[i].type`: a type already used; SDI allows one `DatiRitenuta` per type
+- `withholdings`: an invoice (`TD01`) whose withholdings exceed the amount payable
 
 ### Stamp duty
 
@@ -257,7 +324,7 @@ buildInvoice({
 - **Recipient code.** `recipientCode` is required and must be the 6-character codice univoco ufficio of the receiving office, listed in IPA (indicepa.gov.it). `pec` is rejected: SDI delivers to the office code.
 - **Buyer.** Must be Italian; a foreign address is rejected. Many public bodies have only an 11-digit numeric codice fiscale and no Partita IVA, so pass `fiscalCode` alone.
 - **CIG and CUP.** Put them on the order, contract or agreement they belong to, with `lineNumbers` when they cover only some lines. Their format is checked, but their presence is not: some supplies are exempt. Most offices reject an invoice without the CIG or CUP they expect, so check with the office.
-- **Split payment.** Most public administrations pay VAT directly to the State (scissione dei pagamenti): set `vatExigibility: "S"`.
+- **Split payment.** Most public administrations pay VAT directly to the State (scissione dei pagamenti): set `vatExigibility: "S"`. The amount payable (`payableCents`, `ImportoPagamento`) then excludes the VAT.
 - **Signature.** FPA12 files must carry a qualified electronic signature (CAdES-BES `.p7m` or XAdES-BES) before they reach SDI. This library does not sign: sign through your SDI channel or intermediary, or with your own signing tool.
 
 FPR12 invoices reject 6-character recipient codes, which belong to public administration offices.
@@ -276,18 +343,18 @@ Free text is normalised (NFC). Typographic quotes, apostrophes, dashes and ellip
 
 ## Helpers
 
-| Export                                                                         | Description                                                                                                                                                                             |
-| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `computeTotals(input)`                                                         | Totals and VAT summary without validation or XML.                                                                                                                                       |
-| `allocateCents(total, weights)`                                                | Splits an amount in proportion to weights with the largest-remainder method; the parts always add up to the total. Useful for sharing a delivery fee or discount across lines or rates. |
-| `formatCents(cents)`                                                           | `1234` → `"12.34"`.                                                                                                                                                                     |
-| `isValidVatNumber`, `isValidFiscalCode`, `isValidIban`, `isValidRecipientCode` | The checks `buildInvoice` uses, for validating forms early. `isValidRecipientCode(code, "FPA12")` checks a 6-character office code.                                                     |
-| `compactIdentifier(value)`                                                     | Removes spaces and upper-cases, e.g. for a typed IBAN.                                                                                                                                  |
-| `taxRegimes`, `natures`, `paymentMethods`                                      | The accepted codes, as arrays.                                                                                                                                                          |
+| Export                                                                                              | Description                                                                                                                                                                             |
+| --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `computeTotals(input)`                                                                              | Totals and VAT summary without validation or XML.                                                                                                                                       |
+| `allocateCents(total, weights)`                                                                     | Splits an amount in proportion to weights with the largest-remainder method; the parts always add up to the total. Useful for sharing a delivery fee or discount across lines or rates. |
+| `formatCents(cents)`                                                                                | `1234` → `"12.34"`.                                                                                                                                                                     |
+| `isValidVatNumber`, `isValidFiscalCode`, `isValidIban`, `isValidRecipientCode`                      | The checks `buildInvoice` uses, for validating forms early. `isValidRecipientCode(code, "FPA12")` checks a 6-character office code.                                                     |
+| `compactIdentifier(value)`                                                                          | Removes spaces and upper-cases, e.g. for a typed IBAN.                                                                                                                                  |
+| `taxRegimes`, `natures`, `paymentMethods`, `withholdingTypes`, `paymentReasons`, `pensionFundTypes` | The accepted codes, as arrays.                                                                                                                                                          |
 
 ## Validating against the official schema
 
-`npm run test:schema` downloads the FatturaPA 1.2.2 schema from fatturapa.gov.it and the W3C XML Signature schema it imports into `.xsd/`. It then validates generated invoices, credit notes, discounted, foreign-buyer and public administration invoices with `xmllint`. To check your own files:
+`npm run test:schema` downloads the FatturaPA 1.2.2 schema from fatturapa.gov.it and the W3C XML Signature schema it imports into `.xsd/`. It then validates generated invoices, credit notes, discounted, foreign-buyer, public administration and professional invoices (withholding, pension funds, split payment) with `xmllint`. To check your own files:
 
 ```sh
 sh scripts/fetch-xsd.sh

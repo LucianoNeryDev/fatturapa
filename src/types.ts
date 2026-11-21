@@ -92,6 +92,87 @@ export const paymentMethods = [
 /** ModalitaPagamento: MP05 is a bank transfer (bonifico). */
 export type PaymentMethod = (typeof paymentMethods)[number];
 
+export const withholdingTypes = [
+  "RT01",
+  "RT02",
+  "RT03",
+  "RT04",
+  "RT05",
+  "RT06",
+] as const;
+/**
+ * TipoRitenuta: RT01 withholding on individuals, RT02 on companies, RT03 INPS contribution,
+ * RT04 ENASARCO contribution, RT05 ENPAM contribution, RT06 other social security contribution.
+ */
+export type WithholdingType = (typeof withholdingTypes)[number];
+
+export const paymentReasons = [
+  "A",
+  "B",
+  "C",
+  "D",
+  "E",
+  "G",
+  "H",
+  "I",
+  "L",
+  "L1",
+  "M",
+  "M1",
+  "M2",
+  "N",
+  "O",
+  "O1",
+  "P",
+  "Q",
+  "R",
+  "S",
+  "T",
+  "U",
+  "V",
+  "V1",
+  "W",
+  "X",
+  "Y",
+  "Z",
+  "ZO",
+] as const;
+/**
+ * CausalePagamento: the reason code of the payment in the withholding agent's return (modello
+ * 770). A is professional work, Q and R are sales agents' commissions.
+ */
+export type PaymentReason = (typeof paymentReasons)[number];
+
+export const pensionFundTypes = [
+  "TC01",
+  "TC02",
+  "TC03",
+  "TC04",
+  "TC05",
+  "TC06",
+  "TC07",
+  "TC08",
+  "TC09",
+  "TC10",
+  "TC11",
+  "TC12",
+  "TC13",
+  "TC14",
+  "TC15",
+  "TC16",
+  "TC17",
+  "TC18",
+  "TC19",
+  "TC20",
+  "TC21",
+  "TC22",
+] as const;
+/**
+ * TipoCassa: the professional pension fund, e.g. TC01 lawyers, TC04 engineers and architects,
+ * TC22 INPS (the 4% rivalsa of the gestione separata).
+ */
+export type PensionFundType = (typeof pensionFundTypes)[number];
+
 export interface Address {
   /** Street, without the civic number when `streetNumber` is given. */
   street: string;
@@ -201,6 +282,49 @@ export interface InvoiceLine {
   nature?: Nature;
   /** Law reference printed in the VAT summary for zero-rated lines (RiferimentoNormativo). */
   legalReference?: string;
+  /** The line is subject to the invoice's withholdings (Ritenuta SI). Requires `withholdings`. */
+  withholding?: boolean;
+}
+
+/**
+ * A withholding tax or contribution the buyer withholds and pays to the State on the seller's
+ * behalf (DatiRitenuta). It applies to the lines with `withholding: true` and to the pension
+ * fund contributions with `withholding: true`.
+ */
+export interface Withholding {
+  type: WithholdingType;
+  /** Withholding rate as a percentage above 0 and at most 100, with at most 2 decimals. */
+  rate: number;
+  /** CausalePagamento code, e.g. "A" for professional work. */
+  reason: PaymentReason;
+  /**
+   * Share of the subject amount the rate applies to, as a percentage above 0 and at most 100
+   * with at most 2 decimals; default 100. Sales agents are withheld on 50% (or 20%) of the
+   * commission.
+   */
+  basePercent?: number;
+}
+
+/**
+ * A professional pension fund contribution charged to the buyer (DatiCassaPrevidenziale). It
+ * is added to the taxable amount of its VAT rate.
+ */
+export interface PensionFund {
+  type: PensionFundType;
+  /** Contribution rate (AlCassa) as a percentage above 0 and at most 100, e.g. 4. */
+  rate: number;
+  /** VAT rate on the contribution, usually the rate of the fee. Zero requires `nature`. */
+  vatRate: number;
+  nature?: Nature;
+  /** The contribution is subject to the withholdings (Ritenuta SI), as INPS rivalsa is. */
+  withholding?: boolean;
+  /**
+   * Amount the contribution is computed on (ImponibileCassa), in cents. Defaults to the taxable
+   * amount of the lines and document adjustments.
+   */
+  taxableCents?: number;
+  /** Administrative reference, up to 20 ASCII characters (RiferimentoAmministrazione). */
+  reference?: string;
 }
 
 /**
@@ -246,7 +370,14 @@ export interface InvoiceInput {
   lines: InvoiceLine[];
   /** Discounts and surcharges on the whole invoice, applied in order after the lines. */
   adjustments?: DocumentAdjustment[];
-  /** VAT exigibility: immediate (default), deferred or split payment. */
+  /** Pension fund contributions, computed after the document adjustments. */
+  pensionFunds?: PensionFund[];
+  /** Withholding taxes and contributions, one per type. */
+  withholdings?: Withholding[];
+  /**
+   * VAT exigibility: immediate (default), deferred or split payment. With split payment the
+   * buyer pays the VAT to the Treasury, so the payable amount excludes it.
+   */
   vatExigibility?: "I" | "D" | "S";
   /** Free text (Causale), split into 200-character elements. */
   description?: string;
@@ -284,12 +415,39 @@ export interface InvoiceTotals {
     vatRate: number;
     nature?: Nature;
     amountCents: number;
+    /** Present when every line of its VAT group is subject to withholding (Ritenuta SI). */
+    withholding?: true;
+  }[];
+  /** Pension fund contributions, in input order. */
+  pensionFunds: {
+    type: PensionFundType;
+    /** Amount the contribution is computed on (ImponibileCassa). */
+    taxableCents: number;
+    contributionCents: number;
+    vatRate: number;
+    nature?: Nature;
+  }[];
+  /** Withholdings, in input order. */
+  withholdings: {
+    type: WithholdingType;
+    rate: number;
+    reason: PaymentReason;
+    /** Amount the rate applies to: the subject amount times `basePercent`. */
+    taxableCents: number;
+    amountCents: number;
   }[];
   summary: VatSummary[];
   taxableCents: number;
   vatCents: number;
-  /** Taxable amount plus VAT (ImportoTotaleDocumento). */
+  /** Taxable amount plus VAT (ImportoTotaleDocumento), gross of withholdings. */
   totalCents: number;
+  /** Sum of the withholdings. */
+  withholdingCents: number;
+  /**
+   * Amount the buyer pays the seller (ImportoPagamento): the total less the withholdings, and
+   * less the VAT with split payment.
+   */
+  payableCents: number;
   stampDutyCents: number;
 }
 
