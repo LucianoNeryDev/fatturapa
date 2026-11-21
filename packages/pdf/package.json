@@ -1,0 +1,61 @@
+{
+  "name": "@lucianonerydev/fatturapa-pdf",
+  "version": "0.1.0",
+  "description": "Render the PDF courtesy copy (copia di cortesia) of a FatturaPA invoice built with @lucianonerydev/fatturapa. No other dependencies.",
+  "license": "MIT",
+  "author": "Luciano Nery <luciano@lucianonery.dev> (https://lucianonery.dev)",
+  "homepage": "https://github.com/LucianoNeryDev/fatturapa/tree/master/packages/pdf#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LucianoNeryDev/fatturapa.git",
+    "directory": "packages/pdf"
+  },
+  "bugs": "https://github.com/LucianoNeryDev/fatturapa/issues",
+  "keywords": [
+    "fatturapa",
+    "fattura elettronica",
+    "copia di cortesia",
+    "e-invoice",
+    "pdf",
+    "italy",
+    "invoice"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
+    "test": "tsx --test test/*.test.ts",
+    "format": "prettier --write src test *.md package.json tsconfig.json",
+    "format:check": "prettier --check src test *.md package.json tsconfig.json",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "peerDependencies": {
+    "@lucianonerydev/fatturapa": "^0.2.0"
+  },
+  "devDependencies": {
+    "@lucianonerydev/fatturapa": "file:../..",
+    "@types/node": "^24.0.0",
+    "prettier": "^3.6.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
