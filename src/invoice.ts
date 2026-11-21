@@ -868,12 +868,47 @@ export function buildInvoice(input: InvoiceInput): Invoice {
   );
 
   const payment = input.payment;
+  const installments = payment?.installments;
   if (payment) {
     if (!paymentMethods.includes(payment.method))
       check.add("payment.method", "is not a FatturaPA ModalitaPagamento code");
     check.date("payment.dueDate", payment.dueDate);
     if (payment.iban !== undefined && !isValidIban(payment.iban))
       check.add("payment.iban", "is not a valid IBAN");
+    if (installments) {
+      if (payment.dueDate !== undefined)
+        check.add(
+          "payment.dueDate",
+          "is not allowed with installments: give each instalment its own dueDate",
+        );
+      if (!installments.length)
+        check.add("payment.installments", "needs at least 1 instalment");
+      else if (payment.terms === "installments" && installments.length < 2)
+        check.add(
+          "payment.installments",
+          'needs at least 2 instalments with terms "installments"',
+        );
+      installments.forEach((item, i) => {
+        const at = `payment.installments[${i}]`;
+        check.date(`${at}.dueDate`, item.dueDate);
+        if (item.method !== undefined && !paymentMethods.includes(item.method))
+          check.add(
+            `${at}.method`,
+            "is not a FatturaPA ModalitaPagamento code",
+          );
+        if (item.iban !== undefined && !isValidIban(item.iban))
+          check.add(`${at}.iban`, "is not a valid IBAN");
+        if (
+          item.amountCents !== undefined &&
+          (!Number.isSafeInteger(item.amountCents) || item.amountCents <= 0)
+        )
+          check.add(
+            `${at}.amountCents`,
+            "must be a positive integer number of cents",
+          );
+      });
+    } else if (payment.terms === "installments")
+      check.add("payment.installments", "is required for instalment terms");
   }
   const bank = check.optionalText("payment.bank", payment?.bank, 80);
   const beneficiary = check.optionalText(
@@ -881,6 +916,14 @@ export function buildInvoice(input: InvoiceInput): Invoice {
     payment?.beneficiary,
     200,
   );
+  const installmentTexts = (installments ?? []).map((item, i) => ({
+    bank: check.optionalText(`payment.installments[${i}].bank`, item.bank, 80),
+    beneficiary: check.optionalText(
+      `payment.installments[${i}].beneficiary`,
+      item.beneficiary,
+      200,
+    ),
+  }));
   const description = cleanText(input.description ?? "");
   if (description.invalid)
     check.add(
@@ -910,6 +953,30 @@ export function buildInvoice(input: InvoiceInput): Invoice {
         message: "the withholdings exceed the amount payable",
       },
     ]);
+
+  let installmentAmounts: number[] = [];
+  if (installments?.length) {
+    const given = installments.filter((item) => item.amountCents !== undefined);
+    if (given.length === 0)
+      installmentAmounts = allocateCents(
+        totals.payableCents,
+        installments.map(() => 1),
+      );
+    else if (given.length < installments.length)
+      check.add(
+        "payment.installments",
+        "must give amountCents on every instalment or on none",
+      );
+    else {
+      installmentAmounts = installments.map((item) => item.amountCents!);
+      if (installmentAmounts.reduce((n, a) => n + a, 0) !== totals.payableCents)
+        check.add(
+          "payment.installments",
+          `must add up to the amount payable, ${formatCents(totals.payableCents)} EUR`,
+        );
+    }
+    if (check.issues.length) throw new FatturaPAError(check.issues);
+  }
 
   const idFiscale = (code: string, idCountry = "IT"): XmlNode[] => [
     ["IdPaese", idCountry],
@@ -1239,18 +1306,49 @@ export function buildInvoice(input: InvoiceInput): Invoice {
             ? [
                 "DatiPagamento",
                 [
-                  ["CondizioniPagamento", "TP02"],
                   [
-                    "DettaglioPagamento",
-                    [
-                      ["Beneficiario", beneficiary],
-                      ["ModalitaPagamento", payment.method],
-                      ["DataScadenzaPagamento", payment.dueDate],
-                      ["ImportoPagamento", formatCents(totals.payableCents)],
-                      ["IstitutoFinanziario", bank],
-                      ["IBAN", payment.iban],
+                    "CondizioniPagamento",
+                    { full: "TP02", installments: "TP01", advance: "TP03" }[
+                      payment.terms ?? (installments ? "installments" : "full")
                     ],
                   ],
+                  ...(installments
+                    ? installments.map((item, i): XmlNode => [
+                        "DettaglioPagamento",
+                        [
+                          [
+                            "Beneficiario",
+                            installmentTexts[i]!.beneficiary ?? beneficiary,
+                          ],
+                          ["ModalitaPagamento", item.method ?? payment.method],
+                          ["DataScadenzaPagamento", item.dueDate],
+                          [
+                            "ImportoPagamento",
+                            formatCents(installmentAmounts[i]!),
+                          ],
+                          [
+                            "IstitutoFinanziario",
+                            installmentTexts[i]!.bank ?? bank,
+                          ],
+                          ["IBAN", item.iban ?? payment.iban],
+                        ],
+                      ])
+                    : ([
+                        [
+                          "DettaglioPagamento",
+                          [
+                            ["Beneficiario", beneficiary],
+                            ["ModalitaPagamento", payment.method],
+                            ["DataScadenzaPagamento", payment.dueDate],
+                            [
+                              "ImportoPagamento",
+                              formatCents(totals.payableCents),
+                            ],
+                            ["IstitutoFinanziario", bank],
+                            ["IBAN", payment.iban],
+                          ],
+                        ],
+                      ] as XmlNode[])),
                 ],
               ]
             : undefined,

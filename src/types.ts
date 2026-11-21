@@ -378,13 +378,36 @@ export interface DocumentReference {
   cig?: string;
 }
 
+/** One payment of an invoice paid in instalments (a DettaglioPagamento). */
+export interface Installment {
+  /** YYYY-MM-DD. */
+  dueDate?: string;
+  /** Amount in cents; give it on every instalment or on none (the payable amount is then split equally). */
+  amountCents?: number;
+  /** Defaults to the payment's method. */
+  method?: PaymentMethod;
+  /** Defaults to the payment's IBAN. */
+  iban?: string;
+  /** Defaults to the payment's bank. */
+  bank?: string;
+  /** Defaults to the payment's beneficiary. */
+  beneficiary?: string;
+}
+
 export interface Payment {
   method: PaymentMethod;
-  /** YYYY-MM-DD. */
+  /**
+   * Payment terms (CondizioniPagamento): "full" (TP02), "installments" (TP01) or "advance" (TP03).
+   * Defaults to "installments" when `installments` is given, otherwise "full".
+   */
+  terms?: "full" | "installments" | "advance";
+  /** YYYY-MM-DD. Not allowed with `installments`: give each instalment its own date. */
   dueDate?: string;
   iban?: string;
   bank?: string;
   beneficiary?: string;
+  /** Each instalment renders one DettaglioPagamento. */
+  installments?: Installment[];
 }
 
 export interface InvoiceInput {
