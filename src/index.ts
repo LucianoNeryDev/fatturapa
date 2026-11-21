@@ -1,5 +1,12 @@
 export { buildInvoice, computeTotals, FatturaPAError } from "./invoice.js";
 export type { ValidationIssue } from "./invoice.js";
+export { parseInvoice } from "./read.js";
+export type {
+  DeclaredTotals,
+  InvoiceAttachment,
+  ParsedInvoiceFile,
+  ReceivedInvoice,
+} from "./read.js";
 export {
   compactIdentifier,
   isValidFiscalCode,

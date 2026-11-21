@@ -300,6 +300,12 @@ export interface DocumentAdjustment {
 }
 
 export interface InvoiceLine {
+  /**
+   * Line type (TipoCessionePrestazione): a discount (SC), premium (PR), rebate (AB) or
+   * accessory charge (AC). Informative: the line total is still the price times the quantity,
+   * so a discount line takes a negative price.
+   */
+  kind?: "discount" | "premium" | "rebate" | "charge";
   description: string;
   /** Decimal quantity with up to 8 decimals. Omit for a single service or charge. */
   quantity?: number | string;

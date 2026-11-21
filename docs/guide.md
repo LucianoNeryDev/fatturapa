@@ -16,6 +16,8 @@ try {
 
 All amounts are integer euro cents (`2490` is €24.90). Quantities and percentages are decimals.
 
+`parseInvoice(file)` reads a received FatturaPA file, plain XML or a signed `.p7m`, back into the same input shape: see [Reading invoices](#reading-invoices).
+
 ## Input
 
 ### `InvoiceInput`
@@ -85,17 +87,18 @@ An Italian buyer needs a `vatNumber`, a `fiscalCode` or both. Private consumers 
 
 ### Line
 
-| Field            | Required | Description                                                                                                                                                                                            |
-| ---------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `description`    | yes      | Up to 1000 characters.                                                                                                                                                                                 |
-| `quantity`       |          | Positive decimal (number or string) with up to 12 digits and 8 decimals. Omit for a single service or charge. Pass a string such as `"1.25"` to avoid binary floating-point surprises.                 |
-| `unit`           |          | Unit of measure, up to 10 ASCII characters.                                                                                                                                                            |
-| `unitPriceCents` | yes      | Unit price before VAT. May be negative for a discount line.                                                                                                                                            |
-| `adjustments`    |          | Discounts and surcharges on the unit price, see [Discounts and surcharges](#discounts-and-surcharges).                                                                                                 |
-| `vatRate`        | yes      | Percentage with up to 2 decimals, e.g. `22`, `10`, `4`, `0`.                                                                                                                                           |
-| `nature`         | rate 0   | Why the line carries no VAT (`Natura`), e.g. `N2.2`, `N3.1`, `N4`. Required when the rate is 0 and rejected otherwise. The generic `N2`, `N3` and `N6` codes are rejected, as SDI has done since 2021. |
-| `legalReference` |          | Law reference for zero-rated lines, up to 100 characters, printed in the VAT summary (`RiferimentoNormativo`).                                                                                         |
-| `withholding`    |          | `true` when the line is subject to the invoice's `withholdings` (`Ritenuta` `SI`). See [Withholding tax and pension funds](#withholding-tax-and-pension-funds).                                        |
+| Field            | Required | Description                                                                                                                                                                                                                                               |
+| ---------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `description`    | yes      | Up to 1000 characters.                                                                                                                                                                                                                                    |
+| `quantity`       |          | Positive decimal (number or string) with up to 12 digits and 8 decimals. Omit for a single service or charge. Pass a string such as `"1.25"` to avoid binary floating-point surprises.                                                                    |
+| `unit`           |          | Unit of measure, up to 10 ASCII characters.                                                                                                                                                                                                               |
+| `unitPriceCents` | yes      | Unit price before VAT. May be negative for a discount line.                                                                                                                                                                                               |
+| `adjustments`    |          | Discounts and surcharges on the unit price, see [Discounts and surcharges](#discounts-and-surcharges).                                                                                                                                                    |
+| `vatRate`        | yes      | Percentage with up to 2 decimals, e.g. `22`, `10`, `4`, `0`.                                                                                                                                                                                              |
+| `nature`         | rate 0   | Why the line carries no VAT (`Natura`), e.g. `N2.2`, `N3.1`, `N4`. Required when the rate is 0 and rejected otherwise. The generic `N2`, `N3` and `N6` codes are rejected, as SDI has done since 2021.                                                    |
+| `legalReference` |          | Law reference for zero-rated lines, up to 100 characters, printed in the VAT summary (`RiferimentoNormativo`).                                                                                                                                            |
+| `withholding`    |          | `true` when the line is subject to the invoice's `withholdings` (`Ritenuta` `SI`). See [Withholding tax and pension funds](#withholding-tax-and-pension-funds).                                                                                           |
+| `kind`           |          | Line type (`TipoCessionePrestazione`): `"discount"` (`SC`), `"premium"` (`PR`), `"rebate"` (`AB`) or `"charge"` (`AC`, an accessory charge). Informative: the line total is still the price times the quantity, so give a discount line a negative price. |
 
 ### Document references
 
@@ -367,7 +370,7 @@ Free text is normalised (NFC). Typographic quotes, apostrophes, dashes and ellip
 
 ## Errors
 
-`FatturaPAError` has `issues: { path, message }[]`. `path` names the input field, e.g. `seller.vatNumber`, `lines[2].nature` or `lines[0].adjustments[1].percent`. Its message lists all issues. Map the paths to your own form fields or messages; the English messages are meant for developers and logs.
+`FatturaPAError` has `issues: { path, message }[]`. For `buildInvoice`, `path` names the input field, e.g. `seller.vatNumber`, `lines[2].nature` or `lines[0].adjustments[1].percent`. Its message lists all issues. Map the paths to your own form fields or messages; the English messages are meant for developers and logs. `parseInvoice` reports element paths instead, see [Errors when reading](#errors-when-reading).
 
 ## Helpers
 
@@ -379,6 +382,64 @@ Free text is normalised (NFC). Typographic quotes, apostrophes, dashes and ellip
 | `isValidVatNumber`, `isValidFiscalCode`, `isValidIban`, `isValidRecipientCode`                      | The checks `buildInvoice` uses, for validating forms early. `isValidRecipientCode(code, "FPA12")` checks a 6-character office code.                                                     |
 | `compactIdentifier(value)`                                                                          | Removes spaces and upper-cases, e.g. for a typed IBAN.                                                                                                                                  |
 | `taxRegimes`, `natures`, `paymentMethods`, `withholdingTypes`, `paymentReasons`, `pensionFundTypes` | The accepted codes, as arrays.                                                                                                                                                          |
+
+## Reading invoices
+
+`parseInvoice(file)` reads a FatturaPA file you received, such as a supplier's invoice downloaded from the SDI or your intermediary:
+
+```ts
+import { readFile } from "node:fs/promises";
+import { parseInvoice } from "@lucianonerydev/fatturapa";
+
+const { invoices } = parseInvoice(
+  await readFile("IT01234567890_A1B2C.xml.p7m"),
+);
+for (const { input, declared, attachments, unsupported } of invoices) {
+  console.log(input.seller.name, input.number, declared.totalCents);
+  if (unsupported.length) console.log("not mapped:", unsupported);
+  for (const file of attachments) await writeAttachment(file.name, file.data);
+}
+```
+
+`file` is the XML as a string, or the file's bytes as a `Uint8Array` (a Node.js `Buffer` is one):
+
+- **XML.** Bytes are decoded with their byte order mark, or with the `encoding` of the XML declaration (UTF-8 by default; ISO-8859-1 and windows-1252 are decoded with the platform's `TextDecoder`). Namespace prefixes (`p:`, `ns2:`, `ns3:` or none) are ignored.
+- **Signed files (`.p7m`).** CAdES-BES envelopes are unwrapped to the signed XML: DER or BER, with indefinite lengths and segmented content, and also as base64 text, as some channels deliver them. **The signature is not verified**: neither the signer, the certificate chain nor the integrity of the content is checked. If you need that assurance, verify the file with a signature tool first. SDI checks the signature of the signed files it accepts. An enveloped XAdES `ds:Signature` is skipped, also unverified.
+
+The parser has no dependencies and runs in browsers. It rejects any `DOCTYPE`, so no entity is expanded and no external resource is loaded, and it rejects elements nested deeper than 100 levels.
+
+The result has the file's `format` (`FPR12` or `FPA12`) and one entry in `invoices` per `FatturaElettronicaBody`: a batch (lotto) holds several invoices with one header. Each has:
+
+| Field         | Description                                                                                                                                                                                                                   |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input`       | The header and this body mapped to [`InvoiceInput`](#invoiceinput), the shape `buildInvoice` takes. Amounts are integer cents parsed from the decimal text, never through floating point; rates are numbers (`22.00` → `22`). |
+| `declared`    | The amounts as written in the file, not recomputed: `lines[i].lineTotalCents`, `summary` (with `exigibility`), `totalCents`, `roundingCents`, `stampDutyCents`, `withholdings`, `pensionFunds` and `payments`.                |
+| `attachments` | `Allegati`: `{ name, format?, description?, data }`, with `data` base64-decoded to a `Uint8Array`. It is still compressed when the file declares an `AlgoritmoCompressione`.                                                  |
+| `unsupported` | Paths of the elements present in the file that `input` cannot represent, e.g. `FatturaElettronicaBody[0].DatiGenerali.DatiTrasporto`.                                                                                         |
+
+### Declared and recomputed amounts
+
+`declared` is what the seller sent, and what you should book. `buildInvoice(input)` recomputes the totals from the lines, so the two can differ when the seller rounded differently, or when the file carries something `input` cannot hold. Some details of the mapping:
+
+- **Lines.** `SC`, `PR`, `AB` and `AC` lines (`TipoCessionePrestazione`) keep their `kind`; a document-level discount generated by this library reads back as `discount` and `charge` lines, not as `adjustments`. `Quantita` becomes a string quantity.
+- **Unit prices** may have up to 8 decimals in FatturaPA. One that is not a whole number of cents is rounded half away from zero into `unitPriceCents` and listed in `unsupported`.
+- **Pension funds** keep `ImponibileCassa` as `taxableCents`, so the contribution recomputes exactly. **Withholdings** keep their type, rate and reason; `basePercent` is not in the file and is left out, so a sales agent's withholding on 50% recomputes differently from `declared.withholdings`.
+- **Payment.** `CondizioniPagamento` becomes `terms`. One `DettaglioPagamento` fills the payment's own fields; several become `installments`, each with its explicit `amountCents`.
+- **Legal references** (`RiferimentoNormativo`) of the VAT summary go to the first line of their rate and nature.
+
+### Unsupported elements
+
+Every element is tracked: one that the mapping does not consume, or cannot express exactly, is listed in `unsupported` by its path (the outermost such element, with an index on repeatable elements). Common ones are `DatiTrasporto`, `DatiDDT`, `DatiSAL`, `CodiceArticolo`, `AltriDatiGestionali`, `DataInizioPeriodo`, `IscrizioneREA`, `Contatti`, `Arrotondamento`, every `Allegati` (returned in `attachments`), a person's `Nome` and `Cognome` (joined into `name`, which the builder writes as `Denominazione`), a currency other than EUR, and codes outside the library's lists, such as a `TD06` document type or the old `N2` nature. Such codes are kept in `input` as written. Header paths appear in the list of every invoice of the file.
+
+An empty `unsupported` means `buildInvoice(input)` writes the same elements with the same values, apart from the totals it recomputes, which match `declared` whenever the seller computed them as SDI does. A file generated by this library reads back with an empty list, and rebuilding it gives the same file byte for byte.
+
+### Errors when reading
+
+`parseInvoice` throws a `FatturaPAError` when the file cannot be read as an invoice. Issue paths are element paths, e.g. `FatturaElettronicaBody[0].DatiBeniServizi.DettaglioLinee[2].PrezzoTotale`, or `file` for the file as a whole:
+
+- the file is not XML, not well-formed XML (the message gives the line and column), has a `DOCTYPE`, or is a `.p7m` without readable signed content (e.g. a detached signature)
+- the root element is not `FatturaElettronica`, or its `versione` is not `FPR12` or `FPA12` (simplified invoices, `FSM10`, are not supported)
+- a required element is missing, or an amount, rate or line number cannot be parsed
 
 ## Validating against the official schema
 

@@ -111,6 +111,14 @@ function country(address: { country?: string }) {
   return address.country ?? "IT";
 }
 
+/** TipoCessionePrestazione code of each line kind. */
+export const lineKindCodes = {
+  discount: "SC",
+  premium: "PR",
+  rebate: "AB",
+  charge: "AC",
+} as const;
+
 /** The largest percentage the Percentuale field holds. */
 const maxPercent = 999.99;
 
@@ -788,6 +796,11 @@ export function buildInvoice(input: InvoiceInput): Invoice {
         `${path}.quantity`,
         "must be a positive number with at most 12 digits and 8 decimals",
       );
+    if (line.kind !== undefined && !Object.hasOwn(lineKindCodes, line.kind))
+      check.add(
+        `${path}.kind`,
+        'must be "discount", "premium", "rebate" or "charge"',
+      );
     if (!Number.isSafeInteger(line.unitPriceCents))
       check.add(`${path}.unitPriceCents`, "must be an integer");
     (line.adjustments ?? []).forEach((adjustment, i) => {
@@ -1199,6 +1212,10 @@ export function buildInvoice(input: InvoiceInput): Invoice {
                   "DettaglioLinee",
                   [
                     ["NumeroLinea", String(index + 1)],
+                    [
+                      "TipoCessionePrestazione",
+                      line.kind && lineKindCodes[line.kind],
+                    ],
                     ["Descrizione", clean.description],
                     [
                       "Quantita",
