@@ -1,6 +1,6 @@
 {
   "name": "@lucianonerydev/fatturapa",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Build and validate Italian electronic invoices (FatturaPA FPR12) from integer cents, with SDI-consistent totals. Zero dependencies.",
   "license": "MIT",
   "author": "Luciano Nery <luciano@lucianonery.dev> (https://lucianonery.dev)",

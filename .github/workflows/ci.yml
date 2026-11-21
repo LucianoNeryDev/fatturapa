@@ -16,12 +16,24 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      - name: Install xmllint
+          cache-dependency-path: |
+            package-lock.json
+            packages/pdf/package-lock.json
+      - name: Install xmllint and pdftotext
         run: |
           SUDO=""; [ "$(id -u)" -eq 0 ] || SUDO="sudo"
           $SUDO apt-get update
-          $SUDO apt-get install -y --no-install-recommends libxml2-utils curl
+          $SUDO apt-get install -y --no-install-recommends libxml2-utils poppler-utils curl
       - run: npm ci
       - run: npm run typecheck
       - run: npm run format:check
       - run: npm run test:schema
+      - run: npm run build
+      # The PDF package depends on the built core through file:../..
+      - name: PDF package
+        working-directory: packages/pdf
+        run: |
+          npm ci
+          npm run typecheck
+          npm run format:check
+          npm test
