@@ -17,6 +17,7 @@ import {
 } from "./identifiers.js";
 import type {
   Address,
+  DocumentReference,
   Invoice,
   InvoiceInput,
   InvoiceLine,
@@ -47,7 +48,6 @@ const stampDutyNatures: Nature[] = ["N1", "N2.1", "N2.2", "N3.5", "N3.6", "N4"];
 const stampDutyThresholdCents = 7747;
 const stampDutyCents = 200;
 const namespaces = [
-  'versione="FPR12"',
   'xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
   'xmlns:p="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2"',
   'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"',
@@ -154,6 +154,61 @@ function checkAddress(check: Checker, path: string, address: Address) {
   if (!/^[A-Z]{2}$/.test(result.country))
     check.add(`${path}.country`, "must be an ISO 3166-1 alpha-2 code");
   return result;
+}
+
+/**
+ * Checks one or several document references (DatiDocumentiCorrelatiType). A single object is
+ * reported at `path`, an array at `path[i]`.
+ */
+function checkReferences(
+  check: Checker,
+  path: string,
+  value: DocumentReference | DocumentReference[] | undefined,
+  lineCount: number,
+) {
+  if (value === undefined) return [];
+  const many = Array.isArray(value);
+  return (many ? value : [value]).map((ref, index) => {
+    const at = many ? `${path}[${index}]` : path;
+    const id = check.text(`${at}.id`, ref.id, 20, true);
+    check.date(`${at}.date`, ref.date);
+    (ref.lineNumbers ?? []).forEach((n, i) => {
+      if (!Number.isInteger(n) || n < 1 || n > lineCount)
+        check.add(
+          `${at}.lineNumbers[${i}]`,
+          `must be a line number from 1 to ${lineCount}`,
+        );
+    });
+    return {
+      lineNumbers: ref.lineNumbers ?? [],
+      id,
+      date: ref.date,
+      itemCode: check.optionalText(`${at}.itemCode`, ref.itemCode, 100),
+      cup: check.optionalText(`${at}.cup`, ref.cup, 15, true),
+      cig: check.optionalText(`${at}.cig`, ref.cig, 15, true),
+    };
+  });
+}
+
+/** Renders checked references as DatiDocumentiCorrelatiType elements, in schema order. */
+function referenceNodes(
+  name: string,
+  references: ReturnType<typeof checkReferences>,
+): XmlNode[] {
+  return references.map((ref) => [
+    name,
+    [
+      ...ref.lineNumbers.map((n): XmlNode => [
+        "RiferimentoNumeroLinea",
+        String(n),
+      ]),
+      ["IdDocumento", ref.id],
+      ["Data", ref.date],
+      ["CodiceCommessaConvenzione", ref.itemCode],
+      ["CodiceCUP", ref.cup],
+      ["CodiceCIG", ref.cig],
+    ],
+  ]);
 }
 
 /** Strips spaces and a leading country prefix from a foreign VAT number (EL for Greece). */
@@ -284,12 +339,17 @@ export function computeTotals(
 }
 
 /**
- * Validates an invoice and renders it as a FatturaPA FPR12 (private-sector) XML file,
- * ready for an SDI channel or intermediary. Throws FatturaPAError listing every problem.
+ * Validates an invoice and renders it as a FatturaPA FPR12 (private-sector) or FPA12 (public
+ * administration) XML file, ready for an SDI channel or intermediary. Throws FatturaPAError
+ * listing every problem.
  */
 export function buildInvoice(input: InvoiceInput): Invoice {
   const check = new Checker();
   const type = input.type ?? "TD01";
+  const format = input.format ?? "FPR12";
+  const publicAdministration = format === "FPA12";
+  if (format !== "FPR12" && !publicAdministration)
+    check.add("format", 'must be "FPR12" or "FPA12"');
   const { seller, buyer, issuer, transmitter } = input;
 
   const number = check.text("number", input.number, 20, true);
@@ -346,18 +406,47 @@ export function buildInvoice(input: InvoiceInput): Invoice {
     check.add("buyer.fiscalCode", "is not a valid codice fiscale");
   const buyerName = check.text("buyer.name", buyer.name, 80);
   const buyerAddress = checkAddress(check, "buyer.address", buyer.address);
-  const recipientCode =
-    buyer.recipientCode ?? (foreign ? "XXXXXXX" : "0000000");
-  if (!isValidRecipientCode(recipientCode))
-    check.add("buyer.recipientCode", "must be 7 upper-case letters or digits");
-  else if (foreign !== (recipientCode === "XXXXXXX"))
-    check.add(
-      "buyer.recipientCode",
-      foreign
-        ? 'must be "XXXXXXX" for foreign buyers'
-        : '"XXXXXXX" is only for foreign buyers',
-    );
-  if (buyer.pec !== undefined) {
+  let recipientCode: string;
+  if (publicAdministration) {
+    recipientCode = buyer.recipientCode ?? "";
+    if (foreign)
+      check.add(
+        "buyer.address.country",
+        "must be IT: public administration (FPA12) buyers are Italian",
+      );
+    if (buyer.recipientCode === undefined)
+      check.add(
+        "buyer.recipientCode",
+        "is required for FPA12: the 6-character codice univoco ufficio from IPA",
+      );
+    else if (!isValidRecipientCode(recipientCode, "FPA12"))
+      check.add(
+        "buyer.recipientCode",
+        "must be the 6-character codice univoco ufficio from IPA for FPA12",
+      );
+    if (buyer.pec !== undefined)
+      check.add(
+        "buyer.pec",
+        "is not used for FPA12: SDI delivers to the office's recipient code",
+      );
+  } else {
+    recipientCode = buyer.recipientCode ?? (foreign ? "XXXXXXX" : "0000000");
+    if (!isValidRecipientCode(recipientCode))
+      check.add(
+        "buyer.recipientCode",
+        isValidRecipientCode(recipientCode, "FPA12")
+          ? 'must be 7 upper-case letters or digits; 6-character codes are public administration offices: set format "FPA12"'
+          : "must be 7 upper-case letters or digits",
+      );
+    else if (foreign !== (recipientCode === "XXXXXXX"))
+      check.add(
+        "buyer.recipientCode",
+        foreign
+          ? 'must be "XXXXXXX" for foreign buyers'
+          : '"XXXXXXX" is only for foreign buyers',
+      );
+  }
+  if (buyer.pec !== undefined && !publicAdministration) {
     if (recipientCode !== "0000000")
       check.add(
         "buyer.pec",
@@ -483,11 +572,31 @@ export function buildInvoice(input: InvoiceInput): Invoice {
       date: linked.date,
     };
   });
-  const orderReference = input.orderReference && {
-    id: check.text("orderReference.id", input.orderReference.id, 20, true),
-    date: input.orderReference.date,
-  };
-  check.date("orderReference.date", input.orderReference?.date);
+  const lineCount = input.lines.length;
+  const orderReferences = checkReferences(
+    check,
+    "orderReference",
+    input.orderReference,
+    lineCount,
+  );
+  const contractReferences = checkReferences(
+    check,
+    "contractReference",
+    input.contractReference,
+    lineCount,
+  );
+  const agreementReferences = checkReferences(
+    check,
+    "agreementReference",
+    input.agreementReference,
+    lineCount,
+  );
+  const receiptReferences = checkReferences(
+    check,
+    "receiptReference",
+    input.receiptReference,
+    lineCount,
+  );
 
   const payment = input.payment;
   if (payment) {
@@ -547,7 +656,7 @@ export function buildInvoice(input: InvoiceInput): Invoice {
       ?.map((part) => part.trim()) ?? [];
 
   const tree: XmlNode = [
-    `p:FatturaElettronica ${namespaces}`,
+    `p:FatturaElettronica versione="${format}" ${namespaces}`,
     [
       [
         "FatturaElettronicaHeader",
@@ -560,7 +669,7 @@ export function buildInvoice(input: InvoiceInput): Invoice {
                 idFiscale(transmitter.code, transmitter.country),
               ],
               ["ProgressivoInvio", transmitter.sequence],
-              ["FormatoTrasmissione", "FPR12"],
+              ["FormatoTrasmissione", format],
               ["CodiceDestinatario", recipientCode],
               ["PECDestinatario", buyer.pec],
             ],
@@ -643,15 +752,10 @@ export function buildInvoice(input: InvoiceInput): Invoice {
                   ...causali.map((c): XmlNode => ["Causale", c]),
                 ],
               ],
-              orderReference
-                ? [
-                    "DatiOrdineAcquisto",
-                    [
-                      ["IdDocumento", orderReference.id],
-                      ["Data", orderReference.date],
-                    ],
-                  ]
-                : undefined,
+              ...referenceNodes("DatiOrdineAcquisto", orderReferences),
+              ...referenceNodes("DatiContratto", contractReferences),
+              ...referenceNodes("DatiConvenzione", agreementReferences),
+              ...referenceNodes("DatiRicezione", receiptReferences),
               ...linkedInvoices.map((linked): XmlNode => [
                 "DatiFattureCollegate",
                 [

@@ -1,6 +1,6 @@
 # Guide
 
-`buildInvoice(input)` validates an invoice, computes its totals and renders a FatturaPA FPR12 (private-sector) XML file. It returns the XML, the SDI file name and the computed totals, or throws a `FatturaPAError` listing every problem it found.
+`buildInvoice(input)` validates an invoice, computes its totals and renders a FatturaPA XML file: FPR12 for businesses and consumers, or FPA12 for [public administrations](#public-administration-fpa12). It returns the XML, the SDI file name and the computed totals, or throws a `FatturaPAError` listing every problem it found.
 
 ```ts
 import { buildInvoice, FatturaPAError } from "@lucianonerydev/fatturapa";
@@ -20,23 +20,27 @@ All amounts are integer euro cents (`2490` is €24.90). Quantities and percenta
 
 ### `InvoiceInput`
 
-| Field            | Required   | Description                                                                                               |
-| ---------------- | ---------- | --------------------------------------------------------------------------------------------------------- |
-| `type`           |            | `TD01` invoice (default), `TD04` credit note, `TD05` debit note, `TD24` deferred invoice.                 |
-| `number`         | yes        | Invoice number, up to 20 ASCII characters with at least one digit, e.g. `12/A`.                           |
-| `date`           | yes        | Issue date, `YYYY-MM-DD`.                                                                                 |
-| `seller`         | yes        | The supplier (`CedentePrestatore`), see [Seller](#seller).                                                |
-| `buyer`          | yes        | The customer (`CessionarioCommittente`), see [Buyer](#buyer).                                             |
-| `issuer`         |            | A third party issuing on the seller's behalf, see [Third-party issuer](#third-party-issuer).              |
-| `transmitter`    | yes        | Who sends the file to SDI, see [Transmitter and file name](#transmitter-and-file-name).                   |
-| `lines`          | yes        | 1 to 9999 lines, see [Line](#line).                                                                       |
-| `adjustments`    |            | Discounts and surcharges on the whole invoice, see [Discounts and surcharges](#discounts-and-surcharges). |
-| `vatExigibility` |            | `I` immediate (default), `D` deferred, `S` split payment.                                                 |
-| `description`    |            | Free text (`Causale`), split into 200-character elements at word boundaries.                              |
-| `orderReference` |            | `{ id, date? }`: the buyer's purchase order (`DatiOrdineAcquisto`), id up to 20 ASCII characters.         |
-| `linkedInvoices` | TD04, TD05 | `[{ number, date }]`: the invoices a credit or debit note corrects (`DatiFattureCollegate`).              |
-| `payment`        |            | See [Payment](#payment).                                                                                  |
-| `stampDuty`      |            | `"auto"` (default), `true` or `false`. See [Stamp duty](#stamp-duty).                                     |
+| Field                | Required   | Description                                                                                                         |
+| -------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------- |
+| `format`             |            | `FPR12` (default) for businesses and consumers, `FPA12` for [public administrations](#public-administration-fpa12). |
+| `type`               |            | `TD01` invoice (default), `TD04` credit note, `TD05` debit note, `TD24` deferred invoice.                           |
+| `number`             | yes        | Invoice number, up to 20 ASCII characters with at least one digit, e.g. `12/A`.                                     |
+| `date`               | yes        | Issue date, `YYYY-MM-DD`.                                                                                           |
+| `seller`             | yes        | The supplier (`CedentePrestatore`), see [Seller](#seller).                                                          |
+| `buyer`              | yes        | The customer (`CessionarioCommittente`), see [Buyer](#buyer).                                                       |
+| `issuer`             |            | A third party issuing on the seller's behalf, see [Third-party issuer](#third-party-issuer).                        |
+| `transmitter`        | yes        | Who sends the file to SDI, see [Transmitter and file name](#transmitter-and-file-name).                             |
+| `lines`              | yes        | 1 to 9999 lines, see [Line](#line).                                                                                 |
+| `adjustments`        |            | Discounts and surcharges on the whole invoice, see [Discounts and surcharges](#discounts-and-surcharges).           |
+| `vatExigibility`     |            | `I` immediate (default), `D` deferred, `S` split payment.                                                           |
+| `description`        |            | Free text (`Causale`), split into 200-character elements at word boundaries.                                        |
+| `orderReference`     |            | The buyer's purchase orders (`DatiOrdineAcquisto`), see [Document references](#document-references).                |
+| `contractReference`  |            | Contracts (`DatiContratto`), see [Document references](#document-references).                                       |
+| `agreementReference` |            | Framework agreements, convenzioni (`DatiConvenzione`), see [Document references](#document-references).             |
+| `receiptReference`   |            | Receipts of the goods or services (`DatiRicezione`), see [Document references](#document-references).               |
+| `linkedInvoices`     | TD04, TD05 | `[{ number, date }]`: the invoices a credit or debit note corrects (`DatiFattureCollegate`).                        |
+| `payment`            |            | See [Payment](#payment).                                                                                            |
+| `stampDuty`          |            | `"auto"` (default), `true` or `false`. See [Stamp duty](#stamp-duty).                                               |
 
 ### Seller
 
@@ -50,15 +54,15 @@ All amounts are integer euro cents (`2490` is €24.90). Quantities and percenta
 
 ### Buyer
 
-| Field           | Required  | Description                                                                                                                       |
-| --------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `vatNumber`     | see below | Italian Partita IVA, or a foreign tax identifier for a [foreign buyer](#foreign-buyers).                                          |
-| `vatCountry`    |           | Country that issued `vatNumber`; defaults to the address country.                                                                 |
-| `fiscalCode`    | see below | Italian codice fiscale, 11 digits or 16 characters with omocodia.                                                                 |
-| `name`          | yes       | Up to 80 characters.                                                                                                              |
-| `address`       | yes       | See [Address](#address). Its country decides whether the buyer is foreign.                                                        |
-| `recipientCode` |           | SDI recipient code (codice destinatario), 7 upper-case letters or digits. Defaults to `0000000`, or `XXXXXXX` for foreign buyers. |
-| `pec`           |           | Certified email, only with recipient code `0000000`.                                                                              |
+| Field           | Required  | Description                                                                                                                                                                               |
+| --------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vatNumber`     | see below | Italian Partita IVA, or a foreign tax identifier for a [foreign buyer](#foreign-buyers).                                                                                                  |
+| `vatCountry`    |           | Country that issued `vatNumber`; defaults to the address country.                                                                                                                         |
+| `fiscalCode`    | see below | Italian codice fiscale, 11 digits or 16 characters with omocodia.                                                                                                                         |
+| `name`          | yes       | Up to 80 characters.                                                                                                                                                                      |
+| `address`       | yes       | See [Address](#address). Its country decides whether the buyer is foreign.                                                                                                                |
+| `recipientCode` | FPA12     | SDI recipient code (codice destinatario). FPR12: 7 upper-case letters or digits, defaulting to `0000000`, or `XXXXXXX` for foreign buyers. FPA12: the 6-character codice univoco ufficio. |
+| `pec`           |           | Certified email, only for FPR12 with recipient code `0000000`.                                                                                                                            |
 
 An Italian buyer needs a `vatNumber`, a `fiscalCode` or both. Private consumers usually have only a fiscal code.
 
@@ -85,6 +89,21 @@ An Italian buyer needs a `vatNumber`, a `fiscalCode` or both. Private consumers 
 | `vatRate`        | yes      | Percentage with up to 2 decimals, e.g. `22`, `10`, `4`, `0`.                                                                                                                                           |
 | `nature`         | rate 0   | Why the line carries no VAT (`Natura`), e.g. `N2.2`, `N3.1`, `N4`. Required when the rate is 0 and rejected otherwise. The generic `N2`, `N3` and `N6` codes are rejected, as SDI has done since 2021. |
 | `legalReference` |          | Law reference for zero-rated lines, up to 100 characters, printed in the VAT summary (`RiferimentoNormativo`).                                                                                         |
+
+### Document references
+
+`orderReference`, `contractReference`, `agreementReference` and `receiptReference` each take one reference or an array of them. They are rendered in schema order: purchase orders, contracts, agreements, receipts, then `linkedInvoices`.
+
+| Field         | Required | Description                                                                                                |
+| ------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `id`          | yes      | Document number, up to 20 ASCII characters (`IdDocumento`).                                                |
+| `date`        |          | `YYYY-MM-DD`.                                                                                              |
+| `lineNumbers` |          | The invoice lines the reference applies to, from 1 (`RiferimentoNumeroLinea`). Omit for the whole invoice. |
+| `itemCode`    |          | Order, contract or agreement code, up to 100 characters (`CodiceCommessaConvenzione`).                     |
+| `cup`         |          | Codice Unico di Progetto, up to 15 ASCII characters (`CodiceCUP`).                                         |
+| `cig`         |          | Codice Identificativo Gara, up to 15 ASCII characters (`CodiceCIG`).                                       |
+
+Issue paths name the reference: `orderReference.date` for a single object, `contractReference[1].cig` for an array.
 
 ### Payment
 
@@ -206,13 +225,50 @@ The VAT treatment depends on the transaction and is set on the lines. Common cas
 
 Confirm the treatment with your accountant.
 
+## Public administration (FPA12)
+
+Invoices to Italian public administrations use `format: "FPA12"`. The file is the same apart from `versione` and `FormatoTrasmissione`, and validates against the same schema.
+
+```ts
+buildInvoice({
+  ...input,
+  format: "FPA12",
+  buyer: {
+    fiscalCode: "80012000826",
+    name: "Comune di Esempio",
+    recipientCode: "UF7Q2K",
+    address: {
+      street: "Piazza Municipio 1",
+      postalCode: "25126",
+      city: "Brescia",
+      province: "BS",
+    },
+  },
+  vatExigibility: "S",
+  contractReference: {
+    id: "REP. 45/2026",
+    date: "2026-09-15",
+    cig: "Z1A2B3C4D5",
+    cup: "J41B26000120004",
+  },
+});
+```
+
+- **Recipient code.** `recipientCode` is required and must be the 6-character codice univoco ufficio of the receiving office, listed in IPA (indicepa.gov.it). `pec` is rejected: SDI delivers to the office code.
+- **Buyer.** Must be Italian; a foreign address is rejected. Many public bodies have only an 11-digit numeric codice fiscale and no Partita IVA, so pass `fiscalCode` alone.
+- **CIG and CUP.** Put them on the order, contract or agreement they belong to, with `lineNumbers` when they cover only some lines. Their format is checked, but their presence is not: some supplies are exempt. Most offices reject an invoice without the CIG or CUP they expect, so check with the office.
+- **Split payment.** Most public administrations pay VAT directly to the State (scissione dei pagamenti): set `vatExigibility: "S"`.
+- **Signature.** FPA12 files must carry a qualified electronic signature (CAdES-BES `.p7m` or XAdES-BES) before they reach SDI. This library does not sign: sign through your SDI channel or intermediary, or with your own signing tool.
+
+FPR12 invoices reject 6-character recipient codes, which belong to public administration offices.
+
 ## Credit and debit notes
 
 Credit notes (`TD04`) and debit notes (`TD05`) must reference the invoices they correct in `linkedInvoices`. Their lines carry positive amounts: a credit note for €100 has positive lines, and its type tells SDI it reduces the original. Omit `payment` on a credit note unless you are refunding by a stated method.
 
 ## Text
 
-Free text is normalised (NFC). Typographic quotes, apostrophes, dashes and ellipses are replaced with ASCII, `€` becomes `EUR`, and runs of whitespace become one space. Characters outside Latin-1, such as emoji, are reported as errors rather than silently dropped. Identifiers and codes (number, unit, street number, order id) must be ASCII. XML special characters are escaped.
+Free text is normalised (NFC). Typographic quotes, apostrophes, dashes and ellipses are replaced with ASCII, `€` becomes `EUR`, and runs of whitespace become one space. Characters outside Latin-1, such as emoji, are reported as errors rather than silently dropped. Identifiers and codes (number, unit, street number, reference ids, CIG and CUP) must be ASCII. XML special characters are escaped.
 
 ## Errors
 
@@ -225,13 +281,13 @@ Free text is normalised (NFC). Typographic quotes, apostrophes, dashes and ellip
 | `computeTotals(input)`                                                         | Totals and VAT summary without validation or XML.                                                                                                                                       |
 | `allocateCents(total, weights)`                                                | Splits an amount in proportion to weights with the largest-remainder method; the parts always add up to the total. Useful for sharing a delivery fee or discount across lines or rates. |
 | `formatCents(cents)`                                                           | `1234` → `"12.34"`.                                                                                                                                                                     |
-| `isValidVatNumber`, `isValidFiscalCode`, `isValidIban`, `isValidRecipientCode` | The checks `buildInvoice` uses, for validating forms early.                                                                                                                             |
+| `isValidVatNumber`, `isValidFiscalCode`, `isValidIban`, `isValidRecipientCode` | The checks `buildInvoice` uses, for validating forms early. `isValidRecipientCode(code, "FPA12")` checks a 6-character office code.                                                     |
 | `compactIdentifier(value)`                                                     | Removes spaces and upper-cases, e.g. for a typed IBAN.                                                                                                                                  |
 | `taxRegimes`, `natures`, `paymentMethods`                                      | The accepted codes, as arrays.                                                                                                                                                          |
 
 ## Validating against the official schema
 
-`npm run test:schema` downloads the FatturaPA 1.2.2 schema from fatturapa.gov.it and the W3C XML Signature schema it imports into `.xsd/`. It then validates generated invoices, credit notes, discounted and foreign-buyer invoices with `xmllint`. To check your own files:
+`npm run test:schema` downloads the FatturaPA 1.2.2 schema from fatturapa.gov.it and the W3C XML Signature schema it imports into `.xsd/`. It then validates generated invoices, credit notes, discounted, foreign-buyer and public administration invoices with `xmllint`. To check your own files:
 
 ```sh
 sh scripts/fetch-xsd.sh
