@@ -46,25 +46,29 @@ All amounts are integer euro cents (`2490` is €24.90). Quantities and percenta
 
 ### Seller
 
-| Field        | Required | Description                                                                             |
-| ------------ | -------- | --------------------------------------------------------------------------------------- |
-| `vatNumber`  | yes      | Italian Partita IVA, 11 digits with a valid check digit.                                |
-| `fiscalCode` |          | Codice fiscale, when it differs from the Partita IVA.                                   |
-| `name`       | yes      | Company name, up to 80 characters.                                                      |
-| `taxRegime`  | yes      | `RegimeFiscale`: `RF01` ordinary, `RF19` flat-rate (forfettario), or another `RF` code. |
-| `address`    | yes      | Registered office, see [Address](#address).                                             |
+| Field                    | Required | Description                                                                                                                                                                                  |
+| ------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vatNumber`              | yes      | Italian Partita IVA, 11 digits with a valid check digit. A non-resident seller puts the one it was assigned in Italy.                                                                        |
+| `fiscalCode`             |          | Codice fiscale, when it differs from the Partita IVA.                                                                                                                                        |
+| `name`                   | yes      | Company name, up to 80 characters.                                                                                                                                                           |
+| `taxRegime`              | yes      | `RegimeFiscale`: `RF01` ordinary, `RF19` flat-rate (forfettario), or another `RF` code.                                                                                                      |
+| `address`                | yes      | Registered office, see [Address](#address). Abroad for a non-resident seller.                                                                                                                |
+| `permanentEstablishment` |          | Italian permanent establishment (`StabileOrganizzazione`) of a seller based abroad, an [Address](#address). See [Foreign sellers and representatives](#foreign-sellers-and-representatives). |
+| `fiscalRepresentative`   |          | Fiscal representative (`RappresentanteFiscale`) of a seller based abroad: `vatNumber`, optional `vatCountry` (default `IT`) and `fiscalCode`, and `name`. Not with `permanentEstablishment`. |
 
 ### Buyer
 
-| Field           | Required  | Description                                                                                                                                                                               |
-| --------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `vatNumber`     | see below | Italian Partita IVA, or a foreign tax identifier for a [foreign buyer](#foreign-buyers).                                                                                                  |
-| `vatCountry`    |           | Country that issued `vatNumber`; defaults to the address country.                                                                                                                         |
-| `fiscalCode`    | see below | Italian codice fiscale, 11 digits or 16 characters with omocodia.                                                                                                                         |
-| `name`          | yes       | Up to 80 characters.                                                                                                                                                                      |
-| `address`       | yes       | See [Address](#address). Its country decides whether the buyer is foreign.                                                                                                                |
-| `recipientCode` | FPA12     | SDI recipient code (codice destinatario). FPR12: 7 upper-case letters or digits, defaulting to `0000000`, or `XXXXXXX` for foreign buyers. FPA12: the 6-character codice univoco ufficio. |
-| `pec`           |           | Certified email, only for FPR12 with recipient code `0000000`.                                                                                                                            |
+| Field                    | Required  | Description                                                                                                                                                                               |
+| ------------------------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vatNumber`              | see below | Italian Partita IVA, or a foreign tax identifier for a [foreign buyer](#foreign-buyers).                                                                                                  |
+| `vatCountry`             |           | Country that issued `vatNumber`; defaults to the address country.                                                                                                                         |
+| `fiscalCode`             | see below | Italian codice fiscale, 11 digits or 16 characters with omocodia.                                                                                                                         |
+| `name`                   | yes       | Up to 80 characters.                                                                                                                                                                      |
+| `address`                | yes       | See [Address](#address). Its country decides whether the buyer is foreign.                                                                                                                |
+| `permanentEstablishment` |           | Italian permanent establishment (`StabileOrganizzazione`) of a buyer based abroad, an [Address](#address). Not with `fiscalRepresentative`.                                               |
+| `fiscalRepresentative`   |           | Fiscal representative of a buyer based abroad: `vatNumber`, optional `vatCountry` (default `IT`) and `name`.                                                                              |
+| `recipientCode`          | FPA12     | SDI recipient code (codice destinatario). FPR12: 7 upper-case letters or digits, defaulting to `0000000`, or `XXXXXXX` for foreign buyers. FPA12: the 6-character codice univoco ufficio. |
+| `pec`                    |           | Certified email, only for FPR12 with recipient code `0000000`.                                                                                                                            |
 
 An Italian buyer needs a `vatNumber`, a `fiscalCode` or both. Private consumers usually have only a fiscal code.
 
@@ -291,6 +295,26 @@ The VAT treatment depends on the transaction and is set on the lines. Common cas
 - sales to foreign private consumers: often Italian VAT, with exceptions such as EU distance sales above the threshold
 
 Confirm the treatment with your accountant.
+
+## Foreign sellers and representatives
+
+A seller based abroad but identified for VAT in Italy keeps `vatNumber` as the Italian Partita IVA it was assigned, whether it registered directly, through a fiscal representative or through a permanent establishment. `address` is its foreign head office (`Sede`):
+
+```ts
+seller: {
+  vatNumber: "01234567890", // Italian Partita IVA
+  name: "Fleischerei Schmidt GmbH",
+  taxRegime: "RF01",
+  address: { street: "Hauptstraße 1", postalCode: "10115", city: "Berlin", country: "DE" },
+}
+```
+
+Add one of these, never both:
+
+- **`permanentEstablishment`** is the Italian address of the seller's permanent establishment, rendered as `StabileOrganizzazione` right after `Sede`. Its country must be `IT`.
+- **`fiscalRepresentative`** renders `RappresentanteFiscale` between the seller and the buyer. `vatNumber` is an Italian Partita IVA (checked) unless `vatCountry` names another country, where it is 1-28 letters or digits. `fiscalCode` is optional and `name` is up to 80 characters.
+
+Both are rejected when the seller's address is Italian. A buyer based abroad takes the same two fields (`permanentEstablishment`, and a `fiscalRepresentative` with `vatNumber`, `vatCountry` and `name`), also not together, and only when the buyer's address is foreign. The buyer's recipient code stays `XXXXXXX` for a foreign buyer.
 
 ## Public administration (FPA12)
 

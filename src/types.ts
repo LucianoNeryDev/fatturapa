@@ -189,13 +189,41 @@ export interface Address {
   country?: string;
 }
 
+/** Fiscal representative (RappresentanteFiscale) of a non-resident seller. */
+export interface FiscalRepresentative {
+  /** Italian Partita IVA, or the foreign VAT number when `vatCountry` is set. */
+  vatNumber: string;
+  /** Country that issued `vatNumber`, default "IT". */
+  vatCountry?: string;
+  fiscalCode?: string;
+  name: string;
+}
+
+/** Fiscal representative of a non-resident buyer (RappresentanteFiscale of the recipient). */
+export interface BuyerFiscalRepresentative {
+  /** Italian Partita IVA, or the foreign VAT number when `vatCountry` is set. */
+  vatNumber: string;
+  /** Country that issued `vatNumber`, default "IT". */
+  vatCountry?: string;
+  name: string;
+}
+
 export interface Seller {
-  /** Italian Partita IVA, 11 digits. */
+  /**
+   * Italian Partita IVA, 11 digits. A non-resident seller identified in Italy (directly,
+   * through a representative or a permanent establishment) puts the Italian Partita IVA it was
+   * assigned here and its foreign head office in `address`.
+   */
   vatNumber: string;
   fiscalCode?: string;
   name: string;
   taxRegime: TaxRegime;
+  /** Registered office (Sede); the foreign head office of a non-resident seller. */
   address: Address;
+  /** Italian permanent establishment (StabileOrganizzazione) of a seller based abroad. */
+  permanentEstablishment?: Address;
+  /** Fiscal representative of a seller based abroad; not with `permanentEstablishment`. */
+  fiscalRepresentative?: FiscalRepresentative;
 }
 
 export interface Buyer {
@@ -212,6 +240,10 @@ export interface Buyer {
   fiscalCode?: string;
   name: string;
   address: Address;
+  /** Italian permanent establishment (StabileOrganizzazione) of a buyer based abroad. */
+  permanentEstablishment?: Address;
+  /** Fiscal representative of a buyer based abroad; not with `permanentEstablishment`. */
+  fiscalRepresentative?: BuyerFiscalRepresentative;
   /**
    * SDI recipient code (codice destinatario). FPR12: 7 characters, defaulting to "0000000" for
    * Italian buyers and "XXXXXXX" for foreign ones, the only code allowed for them. FPA12:

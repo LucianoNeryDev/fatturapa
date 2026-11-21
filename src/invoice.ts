@@ -19,6 +19,7 @@ import {
 import type {
   Address,
   DocumentReference,
+  FiscalRepresentative,
   Invoice,
   InvoiceInput,
   InvoiceLine,
@@ -218,6 +219,59 @@ function referenceNodes(
       ["CodiceCIG", ref.cig],
     ],
   ]);
+}
+
+/** Validates a permanent establishment: only for parties based abroad, and Italian. */
+function checkEstablishment(
+  check: Checker,
+  party: "seller" | "buyer",
+  value: { permanentEstablishment?: Address },
+  abroad: boolean,
+) {
+  const address = value.permanentEstablishment;
+  if (address === undefined) return undefined;
+  const path = `${party}.permanentEstablishment`;
+  if (!abroad) check.add(path, `is only for ${party}s based abroad`);
+  if (country(address) !== "IT")
+    check.add(`${path}.country`, "must be IT: it is the Italian establishment");
+  return checkAddress(check, path, address);
+}
+
+/** Validates a fiscal representative: only for parties based abroad, and not with a PE. */
+function checkRepresentative(
+  check: Checker,
+  party: "seller" | "buyer",
+  value: {
+    permanentEstablishment?: Address;
+    fiscalRepresentative?: FiscalRepresentative;
+  },
+  abroad: boolean,
+) {
+  const rep = value.fiscalRepresentative;
+  if (rep === undefined) return undefined;
+  const path = `${party}.fiscalRepresentative`;
+  if (!abroad) check.add(path, `is only for ${party}s based abroad`);
+  else if (value.permanentEstablishment !== undefined)
+    check.add(
+      path,
+      "cannot be combined with permanentEstablishment: use one or the other",
+    );
+  const vatCountry = rep.vatCountry ?? "IT";
+  let vatNumber = rep.vatNumber;
+  if (!/^[A-Z]{2}$/.test(vatCountry))
+    check.add(`${path}.vatCountry`, "must be an ISO 3166-1 alpha-2 code");
+  else if (vatCountry === "IT") {
+    if (!isValidVatNumber(rep.vatNumber))
+      check.add(`${path}.vatNumber`, "is not a valid Partita IVA");
+  } else {
+    vatNumber = foreignVatNumber(rep.vatNumber, vatCountry);
+    if (!/^[A-Z0-9]{1,28}$/.test(vatNumber))
+      check.add(`${path}.vatNumber`, "must be 1-28 letters or digits");
+  }
+  if (rep.fiscalCode !== undefined && !isValidFiscalCode(rep.fiscalCode))
+    check.add(`${path}.fiscalCode`, "is not a valid codice fiscale");
+  const name = check.text(`${path}.name`, rep.name, 80);
+  return { vatNumber, vatCountry, fiscalCode: rep.fiscalCode, name };
 }
 
 /** Strips spaces and a leading country prefix from a foreign VAT number (EL for Greece). */
@@ -580,6 +634,19 @@ export function buildInvoice(input: InvoiceInput): Invoice {
     check.add("seller.taxRegime", "is not a FatturaPA RegimeFiscale code");
   const sellerName = check.text("seller.name", seller.name, 80);
   const sellerAddress = checkAddress(check, "seller.address", seller.address);
+  const sellerAbroad = country(seller.address) !== "IT";
+  const sellerEstablishment = checkEstablishment(
+    check,
+    "seller",
+    seller,
+    sellerAbroad,
+  );
+  const sellerRepresentative = checkRepresentative(
+    check,
+    "seller",
+    seller,
+    sellerAbroad,
+  );
 
   const foreign = country(buyer.address) !== "IT";
   const buyerVatCountry = buyer.vatCountry ?? country(buyer.address);
@@ -613,6 +680,13 @@ export function buildInvoice(input: InvoiceInput): Invoice {
     check.add("buyer.fiscalCode", "is not a valid codice fiscale");
   const buyerName = check.text("buyer.name", buyer.name, 80);
   const buyerAddress = checkAddress(check, "buyer.address", buyer.address);
+  const buyerEstablishment = checkEstablishment(check, "buyer", buyer, foreign);
+  const buyerRepresentative = checkRepresentative(
+    check,
+    "buyer",
+    buyer,
+    foreign,
+  );
   let recipientCode: string;
   if (publicAdministration) {
     recipientCode = buyer.recipientCode ?? "";
@@ -841,8 +915,8 @@ export function buildInvoice(input: InvoiceInput): Invoice {
     ["IdPaese", idCountry],
     ["IdCodice", code],
   ];
-  const sede = (a: ReturnType<typeof checkAddress>): XmlNode => [
-    "Sede",
+  const sede = (a: ReturnType<typeof checkAddress>, tag = "Sede"): XmlNode => [
+    tag,
     [
       ["Indirizzo", a.street],
       ["NumeroCivico", a.streetNumber],
@@ -889,8 +963,35 @@ export function buildInvoice(input: InvoiceInput): Invoice {
                 ],
               ],
               sede(sellerAddress),
+              sellerEstablishment
+                ? sede(sellerEstablishment, "StabileOrganizzazione")
+                : undefined,
             ],
           ],
+          sellerRepresentative
+            ? [
+                "RappresentanteFiscale",
+                [
+                  [
+                    "DatiAnagrafici",
+                    [
+                      [
+                        "IdFiscaleIVA",
+                        idFiscale(
+                          sellerRepresentative.vatNumber,
+                          sellerRepresentative.vatCountry,
+                        ),
+                      ],
+                      ["CodiceFiscale", sellerRepresentative.fiscalCode],
+                      [
+                        "Anagrafica",
+                        [["Denominazione", sellerRepresentative.name]],
+                      ],
+                    ],
+                  ],
+                ],
+              ]
+            : undefined,
           [
             "CessionarioCommittente",
             [
@@ -908,6 +1009,24 @@ export function buildInvoice(input: InvoiceInput): Invoice {
                 ],
               ],
               sede(buyerAddress),
+              buyerEstablishment
+                ? sede(buyerEstablishment, "StabileOrganizzazione")
+                : undefined,
+              buyerRepresentative
+                ? [
+                    "RappresentanteFiscale",
+                    [
+                      [
+                        "IdFiscaleIVA",
+                        idFiscale(
+                          buyerRepresentative.vatNumber,
+                          buyerRepresentative.vatCountry,
+                        ),
+                      ],
+                      ["Denominazione", buyerRepresentative.name],
+                    ],
+                  ]
+                : undefined,
             ],
           ],
           issuer
