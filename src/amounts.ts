@@ -70,11 +70,14 @@ export function rateBasisPoints(rate: number, max = 100): number | undefined {
     : undefined;
 }
 
+/** A percentage (in basis points) of an amount in cents, rounded half away from zero. */
+export function percentOf(cents: number, basisPoints: number): number {
+  return Number(divideRounded(BigInt(cents) * BigInt(basisPoints), 10_000n));
+}
+
 /** VAT on a taxable amount, rounded to the cent. */
 export function vatAmount(taxableCents: number, basisPoints: number): number {
-  return Number(
-    divideRounded(BigInt(taxableCents) * BigInt(basisPoints), 10_000n),
-  );
+  return percentOf(taxableCents, basisPoints);
 }
 
 /** Formats integer cents (or basis points) as a decimal with two places, e.g. 1234 → "12.34". */

@@ -6,6 +6,7 @@ import {
   formatQuantity,
   lineTotal,
   parseQuantity,
+  percentOf,
   rateBasisPoints,
   vatAmount,
 } from "./amounts.js";
@@ -23,9 +24,17 @@ import type {
   InvoiceLine,
   InvoiceTotals,
   Nature,
+  TaxRegime,
   VatSummary,
 } from "./types.js";
-import { natures, paymentMethods, taxRegimes } from "./types.js";
+import {
+  natures,
+  paymentMethods,
+  paymentReasons,
+  pensionFundTypes,
+  taxRegimes,
+  withholdingTypes,
+} from "./types.js";
 import { cleanText, renderXml, type XmlNode } from "./xml.js";
 
 export interface ValidationIssue {
@@ -228,14 +237,49 @@ function formatPercent(basisPoints: number): string {
     .replace(/\.$/, "");
 }
 
+/** The invoice fields the totals depend on. */
+type TotalsInput = Pick<
+  InvoiceInput,
+  | "lines"
+  | "stampDuty"
+  | "adjustments"
+  | "pensionFunds"
+  | "withholdings"
+  | "vatExigibility"
+>;
+
+function groupKey(vatRate: number, nature: Nature | undefined): string {
+  return `${vatRate}|${nature ?? ""}`;
+}
+
+function byRate(a: VatSummary, b: VatSummary): number {
+  return (
+    b.vatRate - a.vatRate || (a.nature ?? "").localeCompare(b.nature ?? "")
+  );
+}
+
 /**
  * Computes the totals and collects the document adjustments that have no positive taxable
  * amount to apply to (reported by buildInvoice with their input path).
  */
-function totalsWithIssues(
-  input: Pick<InvoiceInput, "lines" | "stampDuty" | "adjustments">,
-): { totals: InvoiceTotals; unappliable: number[] } {
+function totalsWithIssues(input: TotalsInput): {
+  totals: InvoiceTotals;
+  unappliable: number[];
+} {
   const groups = new Map<string, VatSummary>();
+  const group = (vatRate: number, nature: Nature | undefined) => {
+    const key = groupKey(vatRate, nature);
+    const found = groups.get(key) ?? {
+      vatRate,
+      ...(nature && { nature }),
+      taxableCents: 0,
+      vatCents: 0,
+    };
+    groups.set(key, found);
+    return found;
+  };
+  // Whether every line of a VAT group is subject to withholding.
+  const withheldGroups = new Map<string, boolean>();
   const lines = input.lines.map((line) => {
     const quantity =
       line.quantity === undefined ? undefined : parseQuantity(line.quantity);
@@ -244,22 +288,17 @@ function totalsWithIssues(
       quantity,
       adjustments(line),
     );
-    const key = `${line.vatRate}|${line.nature ?? ""}`;
-    const group = groups.get(key) ?? {
-      vatRate: line.vatRate,
-      ...(line.nature && { nature: line.nature }),
-      taxableCents: 0,
-      vatCents: 0,
-    };
-    group.legalReference ??= line.legalReference;
-    group.taxableCents += lineTotalCents;
-    groups.set(key, group);
+    const key = groupKey(line.vatRate, line.nature);
+    withheldGroups.set(
+      key,
+      (withheldGroups.get(key) ?? true) && line.withholding === true,
+    );
+    const lineGroup = group(line.vatRate, line.nature);
+    lineGroup.legalReference ??= line.legalReference;
+    lineGroup.taxableCents += lineTotalCents;
     return { lineTotalCents };
   });
-  const sorted = [...groups.values()].sort(
-    (a, b) =>
-      b.vatRate - a.vatRate || (a.nature ?? "").localeCompare(b.nature ?? ""),
-  );
+  const sorted = [...groups.values()].sort(byRate);
   // Document adjustments are spread over the groups in proportion to their taxable amount from
   // the lines alone; each one is computed on the running taxable amount (cascade).
   const weights = sorted.map((g) => Math.max(g.taxableCents, 0));
@@ -286,26 +325,81 @@ function totalsWithIssues(
         : (adjustment.amountCents ?? 0);
     allocateCents(absolute, weights).forEach((part, i) => {
       if (!part) return;
-      const group = sorted[i]!;
-      group.taxableCents += sign * part;
+      const target = sorted[i]!;
+      target.taxableCents += sign * part;
       running += BigInt(sign * part);
       adjustmentLines.push({
         adjustmentIndex,
-        vatRate: group.vatRate,
-        ...(group.nature && { nature: group.nature }),
+        vatRate: target.vatRate,
+        ...(target.nature && { nature: target.nature }),
         amountCents: sign * part,
+        ...(withheldGroups.get(groupKey(target.vatRate, target.nature)) && {
+          withholding: true as const,
+        }),
       });
     });
   });
-  const summary = sorted.map((group) => ({
-    ...group,
-    vatCents: vatAmount(
-      group.taxableCents,
-      rateBasisPoints(group.vatRate) ?? 0,
-    ),
+  // Pension fund contributions are computed on the taxable amount of the lines and document
+  // adjustments, then added to the VAT group of the contribution.
+  const pensionBase = Number(running);
+  const pensionFunds = (input.pensionFunds ?? []).map((fund) => {
+    const taxableCents = fund.taxableCents ?? pensionBase;
+    const contributionCents = percentOf(
+      taxableCents,
+      rateBasisPoints(fund.rate) ?? 0,
+    );
+    group(fund.vatRate, fund.nature).taxableCents += contributionCents;
+    return {
+      type: fund.type,
+      taxableCents,
+      contributionCents,
+      vatRate: fund.vatRate,
+      ...(fund.nature && { nature: fund.nature }),
+    };
+  });
+  // Withholdings apply to the lines and contributions marked as subject to them.
+  const subjectCents =
+    lines.reduce(
+      (n, l, i) =>
+        n + (input.lines[i]!.withholding === true ? l.lineTotalCents : 0),
+      0,
+    ) +
+    adjustmentLines.reduce(
+      (n, l) => n + (l.withholding ? l.amountCents : 0),
+      0,
+    ) +
+    pensionFunds.reduce(
+      (n, f, i) =>
+        n +
+        (input.pensionFunds![i]!.withholding === true
+          ? f.contributionCents
+          : 0),
+      0,
+    );
+  const withholdings = (input.withholdings ?? []).map((withholding) => {
+    const taxableCents = percentOf(
+      subjectCents,
+      rateBasisPoints(withholding.basePercent ?? 100) ?? 0,
+    );
+    return {
+      type: withholding.type,
+      rate: withholding.rate,
+      reason: withholding.reason,
+      taxableCents,
+      amountCents: percentOf(
+        taxableCents,
+        rateBasisPoints(withholding.rate) ?? 0,
+      ),
+    };
+  });
+  const summary = [...groups.values()].sort(byRate).map((g) => ({
+    ...g,
+    vatCents: vatAmount(g.taxableCents, rateBasisPoints(g.vatRate) ?? 0),
   }));
   const taxableCents = summary.reduce((n, s) => n + s.taxableCents, 0);
   const vatCents = summary.reduce((n, s) => n + s.vatCents, 0);
+  const totalCents = taxableCents + vatCents;
+  const withholdingCents = withholdings.reduce((n, w) => n + w.amountCents, 0);
   const stampable = summary
     .filter((s) => s.nature && stampDutyNatures.includes(s.nature))
     .reduce((n, s) => n + s.taxableCents, 0);
@@ -317,10 +411,17 @@ function totalsWithIssues(
     totals: {
       lines,
       adjustmentLines,
+      pensionFunds,
+      withholdings,
       summary,
       taxableCents,
       vatCents,
-      totalCents: taxableCents + vatCents,
+      totalCents,
+      withholdingCents,
+      payableCents:
+        totalCents -
+        withholdingCents -
+        (input.vatExigibility === "S" ? vatCents : 0),
       stampDutyCents: stampDuty ? stampDutyCents : 0,
     },
     unappliable,
@@ -330,12 +431,118 @@ function totalsWithIssues(
 /**
  * Computes line totals and the VAT summary per rate and nature, as SDI recomputes them:
  * VAT is rounded once per rate on the summed taxable amount. Document adjustments are
- * spread over the rates and included.
+ * spread over the rates and included, then pension fund contributions are added; withholdings
+ * and the payable amount follow.
  */
-export function computeTotals(
-  input: Pick<InvoiceInput, "lines" | "stampDuty" | "adjustments">,
-): InvoiceTotals {
+export function computeTotals(input: TotalsInput): InvoiceTotals {
   return totalsWithIssues(input).totals;
+}
+
+/** Checks a VAT rate and nature, on a line or a pension fund. */
+function checkVat(
+  check: Checker,
+  path: string,
+  { vatRate, nature }: { vatRate: number; nature?: Nature },
+  taxRegime: TaxRegime,
+) {
+  const basisPoints = rateBasisPoints(vatRate);
+  if (basisPoints === undefined)
+    check.add(
+      `${path}.vatRate`,
+      "must be a percentage between 0 and 100 with at most 2 decimals",
+    );
+  if (basisPoints === 0 && !nature)
+    check.add(`${path}.nature`, "is required when the VAT rate is 0");
+  if (basisPoints && nature)
+    check.add(`${path}.nature`, "is only allowed when the VAT rate is 0");
+  if (nature && !natures.includes(nature))
+    check.add(`${path}.nature`, "is not a FatturaPA Natura code");
+  if (taxRegime === "RF19" && (basisPoints || nature !== "N2.2"))
+    check.add(
+      `${path}.vatRate`,
+      "flat-rate (RF19) sellers charge no VAT: use rate 0 with nature N2.2",
+    );
+}
+
+/** Whether a percentage is above 0 and at most 100, with at most 2 decimals. */
+function isPositivePercent(value: number): boolean {
+  return !!rateBasisPoints(value);
+}
+
+/**
+ * Checks the pension funds and withholdings, including the SDI consistency rules between
+ * them and the lines. Returns the cleaned pension fund references.
+ */
+function checkWithholdings(
+  check: Checker,
+  input: InvoiceInput,
+): (string | undefined)[] {
+  const percentRule =
+    "must be above 0 and at most 100, with at most 2 decimals";
+  const withholdings = input.withholdings ?? [];
+  const pensionFunds = input.pensionFunds ?? [];
+  const seen = new Map<string, number>();
+  withholdings.forEach((withholding, index) => {
+    const at = `withholdings[${index}]`;
+    if (!withholdingTypes.includes(withholding.type))
+      check.add(`${at}.type`, "is not a FatturaPA TipoRitenuta code");
+    else if (seen.has(withholding.type))
+      check.add(
+        `${at}.type`,
+        `repeats withholdings[${seen.get(withholding.type)}]: SDI allows one withholding per type`,
+      );
+    else seen.set(withholding.type, index);
+    if (!isPositivePercent(withholding.rate))
+      check.add(`${at}.rate`, percentRule);
+    if (!paymentReasons.includes(withholding.reason))
+      check.add(`${at}.reason`, "is not a FatturaPA CausalePagamento code");
+    if (
+      withholding.basePercent !== undefined &&
+      !isPositivePercent(withholding.basePercent)
+    )
+      check.add(`${at}.basePercent`, percentRule);
+  });
+  const references = pensionFunds.map((fund, index) => {
+    const at = `pensionFunds[${index}]`;
+    if (!pensionFundTypes.includes(fund.type))
+      check.add(`${at}.type`, "is not a FatturaPA TipoCassa code");
+    if (!isPositivePercent(fund.rate)) check.add(`${at}.rate`, percentRule);
+    checkVat(check, at, fund, input.seller.taxRegime);
+    if (fund.withholding !== undefined && typeof fund.withholding !== "boolean")
+      check.add(`${at}.withholding`, "must be true or false");
+    if (
+      fund.taxableCents !== undefined &&
+      (!Number.isSafeInteger(fund.taxableCents) || fund.taxableCents < 0)
+    )
+      check.add(`${at}.taxableCents`, "must be a non-negative integer");
+    return check.optionalText(`${at}.reference`, fund.reference, 20, true);
+  });
+  // SDI rejects withholdings with nothing subject to them, and the reverse.
+  const subject = [...input.lines, ...pensionFunds].some(
+    (item) => item.withholding === true,
+  );
+  if (withholdings.length && !subject)
+    check.add(
+      "withholdings",
+      "needs a line or pension fund with withholding: true",
+    );
+  if (!withholdings.length) {
+    input.lines.forEach((line, index) => {
+      if (line.withholding === true)
+        check.add(
+          `lines[${index}].withholding`,
+          "needs the invoice's withholdings",
+        );
+    });
+    pensionFunds.forEach((fund, index) => {
+      if (fund.withholding === true)
+        check.add(
+          `pensionFunds[${index}].withholding`,
+          "needs the invoice's withholdings",
+        );
+    });
+  }
+  return references;
 }
 
 /**
@@ -529,23 +736,9 @@ export function buildInvoice(input: InvoiceInput): Invoice {
       } else if (!Number.isSafeInteger(amountCents) || amountCents! <= 0)
         check.add(`${at}.amountCents`, "must be a positive integer");
     });
-    const basisPoints = rateBasisPoints(line.vatRate);
-    if (basisPoints === undefined)
-      check.add(
-        `${path}.vatRate`,
-        "must be a percentage between 0 and 100 with at most 2 decimals",
-      );
-    if (basisPoints === 0 && !line.nature)
-      check.add(`${path}.nature`, "is required when the VAT rate is 0");
-    if (basisPoints && line.nature)
-      check.add(`${path}.nature`, "is only allowed when the VAT rate is 0");
-    if (line.nature && !natures.includes(line.nature))
-      check.add(`${path}.nature`, "is not a FatturaPA Natura code");
-    if (seller.taxRegime === "RF19" && (basisPoints || line.nature !== "N2.2"))
-      check.add(
-        `${path}.vatRate`,
-        "flat-rate (RF19) sellers charge no VAT: use rate 0 with nature N2.2",
-      );
+    checkVat(check, path, line, seller.taxRegime);
+    if (line.withholding !== undefined && typeof line.withholding !== "boolean")
+      check.add(`${path}.withholding`, "must be true or false");
     return {
       quantity,
       description: check.text(`${path}.description`, line.description, 1000),
@@ -557,6 +750,8 @@ export function buildInvoice(input: InvoiceInput): Invoice {
       ),
     };
   });
+
+  const pensionFundReferences = checkWithholdings(check, input);
 
   if ((type === "TD04" || type === "TD05") && !input.linkedInvoices?.length)
     check.add("linkedInvoices", "must reference the corrected invoice");
@@ -633,6 +828,13 @@ export function buildInvoice(input: InvoiceInput): Invoice {
   if (type === "TD01" && totals.totalCents < 0)
     throw new FatturaPAError([
       { path: "lines", message: "an invoice total cannot be negative" },
+    ]);
+  if (type === "TD01" && totals.payableCents < 0)
+    throw new FatturaPAError([
+      {
+        path: "withholdings",
+        message: "the withholdings exceed the amount payable",
+      },
     ]);
 
   const idFiscale = (code: string, idCountry = "IT"): XmlNode[] => [
@@ -739,6 +941,18 @@ export function buildInvoice(input: InvoiceInput): Invoice {
                   ["Divisa", "EUR"],
                   ["Data", input.date],
                   ["Numero", number],
+                  ...totals.withholdings.map((w): XmlNode => [
+                    "DatiRitenuta",
+                    [
+                      ["TipoRitenuta", w.type],
+                      ["ImportoRitenuta", formatCents(w.amountCents)],
+                      [
+                        "AliquotaRitenuta",
+                        formatCents(rateBasisPoints(w.rate)!),
+                      ],
+                      ["CausalePagamento", w.reason],
+                    ],
+                  ]),
                   totals.stampDutyCents
                     ? [
                         "DatiBollo",
@@ -748,6 +962,31 @@ export function buildInvoice(input: InvoiceInput): Invoice {
                         ],
                       ]
                     : undefined,
+                  ...totals.pensionFunds.map((fund, index): XmlNode => {
+                    const source = input.pensionFunds![index]!;
+                    return [
+                      "DatiCassaPrevidenziale",
+                      [
+                        ["TipoCassa", fund.type],
+                        ["AlCassa", formatCents(rateBasisPoints(source.rate)!)],
+                        [
+                          "ImportoContributoCassa",
+                          formatCents(fund.contributionCents),
+                        ],
+                        ["ImponibileCassa", formatCents(fund.taxableCents)],
+                        [
+                          "AliquotaIVA",
+                          formatCents(rateBasisPoints(fund.vatRate)!),
+                        ],
+                        ["Ritenuta", source.withholding ? "SI" : undefined],
+                        ["Natura", fund.nature],
+                        [
+                          "RiferimentoAmministrazione",
+                          pensionFundReferences[index],
+                        ],
+                      ],
+                    ];
+                  }),
                   ["ImportoTotaleDocumento", formatCents(totals.totalCents)],
                   ...causali.map((c): XmlNode => ["Causale", c]),
                 ],
@@ -811,6 +1050,7 @@ export function buildInvoice(input: InvoiceInput): Invoice {
                       "AliquotaIVA",
                       formatCents(rateBasisPoints(line.vatRate)!),
                     ],
+                    ["Ritenuta", line.withholding ? "SI" : undefined],
                     ["Natura", line.nature],
                   ],
                 ];
@@ -851,6 +1091,7 @@ export function buildInvoice(input: InvoiceInput): Invoice {
                       "AliquotaIVA",
                       formatCents(rateBasisPoints(line.vatRate)!),
                     ],
+                    ["Ritenuta", line.withholding ? "SI" : undefined],
                     ["Natura", line.nature],
                   ],
                 ];
@@ -886,7 +1127,7 @@ export function buildInvoice(input: InvoiceInput): Invoice {
                       ["Beneficiario", beneficiary],
                       ["ModalitaPagamento", payment.method],
                       ["DataScadenzaPagamento", payment.dueDate],
-                      ["ImportoPagamento", formatCents(totals.totalCents)],
+                      ["ImportoPagamento", formatCents(totals.payableCents)],
                       ["IstitutoFinanziario", bank],
                       ["IBAN", payment.iban],
                     ],
